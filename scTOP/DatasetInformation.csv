@@ -1,0 +1,12 @@
+Name,cellTypeColumn,toKeep,toExclude,filePath,timeColumn,duplicates,raw,layer
+Kostas,cell_type_epithelial_mesenchymal_final,"['AT1', 'AT2', 'AT2 activated', 'Proliferating', 'Transitional epithelial']",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Kostas/Kostas.h5ad,,FALSE,FALSE,
+Riemondy,labeled_clusters,"['Basal', 'Injured Type II', 'Naive Type I', 'Naive Type II', 'Transdifferentiating Type II', 'Cell Cycle Arrest Type II', 'Proliferating Type II']",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Riemondy/Riemondy.h5ad,,FALSE,FALSE,
+Choi,celltype_4,"['AT1', 'AT2', 'Primed', 'Intermediate', 'Cycling AT2']",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Choi/celltype_1_Epi_v4_merged_AT2.h5ad,treat,TRUE,FALSE,
+Kobayashi,cell_type,"['AEC1', 'AEC2', 'Ctgf+', 'AEC2-proliferating', 'Lgals3+']",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/KobayashiAnnData.h5ad,,FALSE,FALSE,
+Strunz,cell_type,"[""AT2"", ""AT2 activated"", ""Krt8+ ADI"", ""AT1"", ""Basal"", ""Mki67+ Proliferation""]",,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/StrunzAnnData.h5ad,time_point,FALSE,FALSE,
+Bibek,annotation_update,"['AT1', 'AT2', 'Krt8 high AT2', 'Activated AT2', 'Ciliated', 'Proliferating AT2', 'Secretory']",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/BibekPneumonectomy/objects/Bibek.h5ad,days,FALSE,FALSE,
+Rawlins,new_celltype,"['AT1', 'AT2', 'Krt8 high AT2', 'Activated AT2', 'Ciliated', 'Proliferating AT2', 'Secretory']",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Andrea/EmmaRawlinsBasis.h5ad,,FALSE,FALSE,
+Habermann,celltype,"['AT1', 'AT2', 'KRT5-/KRT17+', 'Proliferating Epithelial Cells', 'Transitional AT2', 'SCGB3A2+', 'SCGB3A2+ SCGB1A1+']",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Habermann/Habermann.h5ad,,FALSE,FALSE,
+Tsukui,celltype,"['Alveolar1', 'Fibrotic', 'Alveolar2', 'Inflammatory', 'Adventitial', 'Smooth muscle', 'Peribronchial', 'Stress-activated', 'Proliferating', 'Mesothelial', 'Pericyte']",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/BibekPneumonectomy/objects/Tsukui.h5ad,,FALSE,FALSE,
+Burgess,new_cluster,"['CASP4+ cells', 'Differentiating iAT2/iAT1', 'Early iAT1s', 'FGL1 high iAT2s', 'iAT2s', 'Late iAT1s']",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Burgess/Burgess.h5ad,,FALSE,FALSE,
+Kathiriya,celltypes,"['ABI1', 'ABI2', 'Ciliated', 'Basal', 'AEC2s', 'Club' ]",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Kathiriya/Kathiriya.h5ad,days,FALSE,FALSE,
