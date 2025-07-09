@@ -1,0 +1,40 @@
+
+```{r Libraries}
+library(Seurat)
+source("seuratAnnDataConversions.R")
+```
+
+```{r Set Conda Environment}
+# Choose conda environment if desired (use ls -a in bash to see hidden directories and files, such as .conda)
+condaEnvironment <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/.conda/envs/KottonLab"
+```
+
+```{r Seurat to AnnData - Rds using filename, output file unspecified}
+riemondyInput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Riemondy/Riemondy.Rds"
+success <- convert_Seurat_to_AnnData(condaEnvironment=condaEnvironment, type="Rds", inputFile=riemondyInput)
+```
+
+```{r Seurat to AnnData - h5seurat using filename}
+kathiriyaInput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Kathiriya/Kathiriya.h5seurat"
+kathiriyaOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Kathiriya/Kathiriya.h5ad"
+success <- convert_Seurat_to_AnnData(condaEnvironment=condaEnvironment, type="h5seurat", inputFile=kathiriyaInput, assay="spliced")
+```
+
+```{r Seurat to AnnData - loaded Rds object}
+Vannan <- readRDS("/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/VannanSpatialIPF/Vannan.rds")
+vannanOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/VannanSpatialIPF/VannanRNA.h5ad"
+success <- convert_Seurat_to_AnnData(seuratObj=Vannan, condaEnvironment=condaEnvironment, type="rds", outputFile=vannanOutput, assay="RNA")
+
+# With a different assay
+vannanOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/VannanSpatialIPF/VannanNiche.h5ad"
+success <- convert_Seurat_to_AnnData(seuratObj=Vannan, condaEnvironment=condaEnvironment, type="rds", outputFile=vannanOutput, assay="niche")
+```
+
+```{r AnnData to Seurat}
+bibekInput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/BibekPneumonectomy/objects/Bibek.h5ad"
+bibekOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/BibekPneumonectomy/objects/Bibek.rds"
+convert_h5ad_to_Rds(bibekInput, bibekOutput, condaEnvironment=condaEnvironment)
+```
+
+
+
