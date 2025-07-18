@@ -9,13 +9,19 @@ import anndata as ad
 from tqdm import tqdm
 import inspect
 from copy import deepcopy
+import os
+import sys
+
 
 class TopObject:
-    def __init__(self, name, manualInit=False, useAverage=False, skipProcess=False, dataset="/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/DatasetInformation.csv"):
+    def __init__(self, name, manualInit=False, useAverage=False, skipProcess=False, dataset="/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Vilker_Helper_Files/scTOP/DatasetInformation.csv"):
         self.name = name
-        datasetInfo = pd.read_csv(dataset, index_col="Name", keep_default_na=False).loc[name, :]
-        if len(datasetInfo) > 1:
+        self.dataset = dataset
+        if self.dataset is not None:
+            datasetInfo = pd.read_csv(self.dataset, index_col="Name", keep_default_na=False).loc[self.name, :]
             self.cellTypeColumn, self.toKeep, self.toExclude, self.filePath, self.timeColumn, self.duplicates, self.raw, self.layer = datasetInfo
+            self.raw = getTruthValue(self.raw)
+            self.duplicates = getTruthValue(self.duplicates)
         else:
             # Prompt to manually add dataset info
             pass
@@ -62,10 +68,10 @@ class TopObject:
 
     # Initialize AnnData object, metadata, df, and process it
     def setup(self, useAverage=False, skipProcess=False):
-        print("Setting AnnData object...")
         if not hasattr(self, "annObject"):
+            print("Setting AnnData object...")
             self.annObject = sc.read_h5ad(self.filePath)
-        if self.duplicates:
+        if self.duplicates and self.duplicates != "":
             self.annObject.var_names_make_unique()
         self.setMetadata()
         self.setDF()
@@ -98,9 +104,10 @@ class TopObject:
             self.timesSorted = sorted([str(time) for time in set(self.metadata[self.timeColumn])], key=self.timeSortFunction)
 
     # Set df, with a few extra options in case there are issues with the df
-    def setDF(self, raw=False, duplicates=False, layer=None):
+    def setDF(self, layer=None):
         print("Setting df...")
-        if self.raw or raw:
+        if self.raw is not None and self.raw and self.raw != "":
+            print(self.raw)
             self.df = pd.DataFrame(self.annObject.raw.X.toarray(), index = self.metadata.index, columns = self.annObject.raw.var_names).T
         else:
             if layer is None or layer == "":
@@ -108,7 +115,7 @@ class TopObject:
                 if layer == "":
                     layer = None
             self.df = self.annObject.to_df(layer=layer).T
-        if self.duplicates or duplicates:
+        if self.duplicates and self.duplicates != "":
             self.df = self.df.drop_duplicates().groupby(level=0).mean()
 
     # First scTOP function, ranks and normalizes source 
@@ -161,12 +168,13 @@ class TopObject:
         return basis
 
     # Add the desired columns of a smaller basis to a primary basis
-    def combineBases(self, otherBasis, firstKeep=None, firstRemove=None, secondKeep=None, secondRemove=None, combinedBasisName="Combined", firstIsPrimary=True):
+    def combineBases(self, otherBasis, firstKeep=None, firstRemove=None, secondKeep=None, secondRemove=None, name="Combined"):
         print("Combining bases...")
         if self.basis is None:
             self.setBasis()
         if isinstance(otherBasis, TopObject):
-            otherBasis.setBasis()
+            if otherBasis.basis is None:
+                otherBasis.setBasis()
             basis2 = otherBasis.basis
         else:
             basis2 = otherBasis
@@ -185,7 +193,7 @@ class TopObject:
         if secondRemove is not None:
             basis2 = basis2[[col for col in basis1.columns if col not in secondRemove]]
         combinedBasis = pd.merge(basis1, basis2, on=basis1.index.name, how="inner")
-        self.combinedBases[combinedBasisName] = combinedBasis
+        self.combinedBases[name] = combinedBasis
         return combinedBasis
 
     # Test an existing basis (not combined). Optionally adjust the minimum accuracy threshold
@@ -265,3 +273,130 @@ class TopObject:
         self.corr = self.basis.corr()
         print("Done!")
         return self.corr
+
+
+def addDataset(summaryFile, name, filePath=None, cellTypeColumn=None, toKeep=None, toExclude=None, timeColumn=None, duplicates=None, raw=None, layer=None):
+    summaryFileInfo = pd.read_csv(summaryFile, index_col="Name", keep_default_na=False)
+    possibleEntries = [cellTypeColumn, toKeep, toExclude, filePath, timeColumn, duplicates, raw, layer]
+    entryCount = len(possibleEntries)
+    alreadyPresent = name in summaryFileInfo.index
+    if alreadyPresent:
+        newEntry = summaryFileInfo.loc[name, :].copy()
+    else:
+        newEntry = pd.Series([None] * entryCount)
+
+    for i in range(entryCount):
+        entry = possibleEntries[i]
+        if entry is not None and entry != "":
+            newEntry.iat[i] = entry
+    newEntry.name = name
+    newEntry = pd.DataFrame(newEntry).T
+    if alreadyPresent:
+        summaryFileInfo.update(newEntry)
+    else:
+        newEntry.columns = summaryFileInfo.columns
+        summaryFileInfo = pd.concat([summaryFileInfo, newEntry], ignore_index=False)
+    summaryFileInfo.to_csv(summaryFile, index_label="Name")
+    return summaryFileInfo
+
+
+# User-friendly way to update or add entry to the summary file
+def dynamicAddDataset(summaryFile=None):
+    if summaryFile is None:
+        summaryFile = processInput("Enter the file path of a csv containing entries formatted for scTOP:", isFile=True, isRequired=True)
+    name = processInput("Assign name. Enter a name to describe your dataset (if updating existing entry, choose the same name):", isRequired=True)
+    filePath = processInput("Assign filePath. Enter the file path corresponding to the anndata object (.h5ad) for your dataset:", isFile=True)
+    cellTypeColumn = processInput("Assign cellTypeColumn. Enter the title of the column containing cell type annotations:")
+    toKeep = processInput("Assign toKeep. Press Y to enter a list of cell types that you may filter to later or press Enter to skip:", followUpMessage="Enter a cell type to include in filtering or press Enter to continue", isList=True)
+    toExclude = processInput("Assign toExclude. Press Y to enter a list of cell types that you may filter out later or press Enter to skip:", followUpMessage="Enter a cell type to exclude in filtering or press Enter to continue", isList=True)
+    timeColumn = processInput("Assign timeColumn, Enter the title of the column containing times samples were collected or press Enter to skip:")
+    duplicates = processInput("Assign duplicates. Enter Y if the dataset has duplicate genes; otherwise enter N or press Enter to skip:", isBool=True)
+    raw = processInput("Assign raw. Enter Y if using the raw values stored in the anndata object instead; otherwise enter N or press Enter to skip:", isBool=True)
+    layer = processInput("Assign layer. Enter the name of a specific layer (typically counts, data, or scaled_data) to use or press Enter to skip:")
+    addDataset(summaryFile, name, filePath=filePath, cellTypeColumn=cellTypeColumn, toKeep=toKeep, toExclude=toExclude, timeColumn=timeColumn, duplicates=duplicates, raw=raw, layer=layer)
+
+
+# Checks user input and processes based on type
+def processInput(message, followUpMessage=None, isFile=False, isList=False, isBool=False, isRequired=False):
+    while True:
+        userInput = input(message)
+        if userInput == "Q":
+            # return "Quit"
+            sys.exit()
+        elif userInput == "":
+            if isRequired:
+                print("A value must be entered here")
+            else:
+                return None
+        elif isFile:
+            if userInput == "Q":
+                # return "Quit"
+                sys.exit()
+            elif os.path.exists(userInput):
+                return userInput
+            else:
+                print("No file found at path: " + userInput)
+        elif isBool:
+            truthValue = getTruthValue(userInput)
+            if truthValue is not None:
+                userInput = truthValue
+                break
+        else:
+            break
+
+    if isList and userInput != "":
+        entryList = []
+        if userInput:
+            while True:
+                entry = input(followUpMessage)
+                if entry == "Q":
+                    # return "Quit"
+                    sys.exit()
+                elif entry == "":
+                    break
+                entryList.append(entry)
+        userInput = entryList
+    return userInput
+
+
+# Allows user to escape if desired
+def checkEscape(userInput):
+    if userInput == "Q":
+        pass
+
+
+# Converts user input to Boolean True or False 
+def getTruthValue(val):
+    val = val.upper()
+    if val == "Y" or val == "YES" or val == "T" or val == "TRUE":
+        return True
+    if val == "N" or val == "NO" or val == "F" or val == "FALSE":
+        return False
+    else:
+        print("Enter a valid true/false value")
+        return None
+
+
+# Queries user for values to add to list if input is True
+def getValueList(userInput, message):
+    if getTruthValue(userInput):
+        entryList = []
+        while True:
+            entry = input(message)
+            if entry == "":
+                break
+            entryList.append(entry)
+    else:
+        entryList = []
+    return entryList
+
+
+# Asks for file until valid path provided 
+def getValidatedFile(file, message):
+    while True:
+        # file = input("Enter the file path of a csv containing entries formatted for scTOP:")
+        file = input(message)
+        if os.path.exists(file):
+            break
+        else:
+            print("No file found at path: " + file)

@@ -45,30 +45,44 @@ def loadMCKOBasis():
 
 
 # Function to make a basis using LungMap human data (to remove once h5ad made for lungMAP)
-def loadHumanBasis(filtering=True, includeRas=False):
-    with h5py.File('/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/scripts/humanBasis.h5', "r") as f:
-        cellTypes = f["df"]["axis0"][:]
-        var = f["df"]["axis1"][:]
-        X = f["df"]["block0_values"][:]
+def loadBasis(file=None, basisCollection=None, basisName=None, filtering=False, includeRas=False, basisKeep=["Alveolar type 2", "Alveolar type 1", "Basal", "Ciliated", "Goblet", "Secretory"]):
+    if file is None:
+        if basisCollection is None or basisName is None:
+            print("Must enter either a filename or a file containing multiple bases and the name of the basis you want")
+            return None
+        file = pd.read_csv(basisCollection, index_col="Name").loc[basisName, "File"]
 
-    humanBasis = pd.DataFrame(X)
-    humanBasis.columns = [col.decode() for col in cellTypes]
-    humanBasis.index = [row.decode() for row in var]
+    if file.endswith("h5"):
+        with h5py.File(file, "r") as f:
+            cellTypes = f["df"]["axis0"][:]
+            var = f["df"]["axis1"][:]
+            X = f["df"]["block0_values"][:]
+    
+        basis = pd.DataFrame(X)
+        basis.columns = [col.decode() for col in cellTypes]
+        basis.index = [row.decode() for row in var]
+    
+    elif file.endswith("csv"):
+        basis = pd.read_csv(file, index_col="gene")
+    else:
+        print("Unsupported file type")
+        return None
+
+    # Reduce wordiness in basis names for LungMAP
     newCols = {}
-    for col in humanBasis.columns:
+    for col in basis.columns:
         idx = col.find("cell")
         if idx != -1:
             newCols[col] = col[:idx - 1]
 
-    humanBasis = humanBasis.rename(columns=newCols)
-    basisKeep = ["Alveolar type 2", "Alveolar type 1", "Basal", "Ciliated", "Goblet", "Secretory"]
-    if includeRas:
-        basisKeep.append("Respiratory airway secretory")
+    basis = basis.rename(columns=newCols)
+    # if includeRas:
+    #     basisKeep.append("Respiratory airway secretory")
 
     if filtering:
-        humanBasis = humanBasis[[colName for colName in humanBasis.columns if colName in basisKeep]]
+        basis = basis[[colName for colName in basis.columns if colName in basisKeep]]
     print("Loaded basis!")
-    return humanBasis
+    return basis
 
 
 # Converts files in raw format (straight from GEO usually) to AnnData
@@ -155,16 +169,8 @@ def getTopPredictedMap(topObject, projections):
 
 # Get a dict of cell types in basis to the similarity scores of each type in the source. 
 # Format: Key (basis label) -> Key (source label) -> Value (projection score list for cells with source label onto the basis label)
-def getMatchingProjections(topObject, projections=None, basisKeep=None, sourceKeep=None, prefix=None):
-
-    # If no projections provided and one exists in the scTOP object, use that
-    if projections is None:
-        if len(topObject.projections.keys()) == 1:
-            projections = list(topObject.projections.values())[0]
-        else:
-            print("Specify projections!")
-            return None
-
+def getMatchingProjections(topObject, projections, basisKeep=None, sourceKeep=None, prefix=None, includeCriteria=None):
+        
     # If no specific columns provided, use all columns
     if basisKeep is None:
         basisKeep = sorted(projections.index)
@@ -273,7 +279,8 @@ def plot_two(projections, celltype1, celltype2,
              geneExpressions=None, ax=None,
              annotations=None, includeCriteria=None,
              hue=None, labels=None, palette=None, markers=None, markerSize=40, 
-             similarityBounds=None, axisFontSize=10, legendFontSize=10):
+             similarityBounds=None, xBounds=None, yBounds=None, plotInRow=False,
+             axisFontSize=10, legendFontSize=10, title=""):
 
     # Filter annotations and/or projections if chosen
     if includeCriteria is not None:
@@ -281,6 +288,9 @@ def plot_two(projections, celltype1, celltype2,
             annotations = np.array(annotations)[includeCriteria]
         if projections is not None:
             projections = projections.loc[:, includeCriteria]
+
+    if labels is None:
+        labels = [str(label) for label in set(annotations)]
 
     # Set axes for current plot
     ax = ax or plt.gca()
@@ -294,7 +304,7 @@ def plot_two(projections, celltype1, celltype2,
         if palette is None or markers is None or labels is None:
             print("Palette or markers or labels not inputted!")
             return None
-        ax = sourceLabelPlotMultiple(ax, x, y, annotations, labels, palette, markers, markerSize=markerSize, axisFontSize=axisFontSize, legendFontSize=legendFontSize)
+        ax = sourceLabelPlotMultiple(ax, x, y, annotations, labels, palette, markers, markerSize=markerSize, axisFontSize=axisFontSize, legendFontSize=legendFontSize, plotInRow=plotInRow)
     else:
         ax = sourceLabelPlotSingle(ax, x, y, annotations, labels, legendFontSize=legendFontSize, markerSize=markerSize, alpha=0.5)
 
@@ -302,9 +312,17 @@ def plot_two(projections, celltype1, celltype2,
     ax.axhline(y=0.1, color='black', linestyle='--', linewidth=0.5, dashes=(5, 10))
 
     if similarityBounds is not None and len(similarityBounds) == 2:
-        ax.set_xlim(similarityBounds[0], similarityBounds[1])
-        ax.set_ylim(similarityBounds[0], similarityBounds[1])
+        xBounds = similarityBounds
+        yBounds = similarityBounds
+    elif xBounds is not None:
+        ax.set_xlim(xBounds[0], xBounds[1])
+    elif yBounds is not None:
+        ax.set_ylim(yBounds[0], yBounds[1])
 
+    if title != "":
+        plt.title(title)
+    if not plotMultiple:
+        plt.tight_layout()
     return ax
 
 
@@ -328,27 +346,25 @@ def geneExpressionPlot(ax, x, y, gene, geneExpressions, annotations, palette, ma
 
 # Craetes a Seaborn 2D scatterplot using projections onto basis columns as axes and source labels to identify points
 def sourceLabelPlotSingle(ax, x, y, annotations, labels, legendFontSize=10, markerSize=40, alpha=0.5):
-    # plot = sns.scatterplot(x=x, y=y, alpha=0.5, ax=ax, hue=hue, **kwargs)
-    plot = sns.scatterplot(x=x, y=y, alpha=0.5, ax=ax, hue=annotations, style=annotations, s=markerSize) #**kwargs)
-    # plt.legend(bbox_to_anchor=(1,1))
+    plot = sns.scatterplot(x=x, y=y, alpha=0.5, ax=ax, hue=annotations, style=annotations, hue_order=labels, style_order=labels, s=markerSize) #**kwargs)
     ax.legend(title="Source Labels", title_fontsize=legendFontSize, fontsize=legendFontSize, loc="upper right")
     return ax
 
 
 # Craetes a Seaborn 2D scatterplot using projections onto basis columns as axes and source labels to identify points
-def sourceLabelPlotMultiple(ax, x, y, annotations, labels, palette, markers, markerSize=40, axisFontSize=16, legendFontSize=16, alpha=0.5):
-    # plot = sns.scatterplot(x=x, y=y, alpha=0.5, ax=ax, hue=hue, hue_order=labels, style_order=labels, markers=markers, palette=palette, **kwargs)
-    # plot = sns.scatterplot(x=x, y=y, alpha=0.5, ax=ax, hue=annotations, style=annotations, hue_order=labels, style_order=labels, markers=markers, s=markerSize, palette=palette)
+def sourceLabelPlotMultiple(ax, x, y, annotations, labels, palette, markers, markerSize=40, axisFontSize=16, legendFontSize=16, alpha=0.5, plotInRow=False):
     plot = sns.scatterplot(x=x, y=y, alpha=0.5, ax=ax, hue=annotations, style=annotations, hue_order=labels, style_order=labels, markers=markers, s=markerSize, palette=palette)
-    ax.legend(title="Source Labels", title_fontsize=axisFontSize, fontsize=legendFontSize, loc="upper right")
+    if plotInRow:
+        plot.legend_.remove()
+        # ax.legend(title="Source Labels", title_fontsize=axisFontSize, fontsize=legendFontSize, loc="upper right")
     return ax
 
 
 # Plot multiple 2D similarity plots at once based on some field, such as time (Note: figure out difference if any between labels and annotations[toInclude])
 def plot_two_multiple(topObject, projections, celltype1, celltype2, annotations=None, subsetCategory=None, subsetNames=None, 
-                      includeCriteria=None, similarityBounds=None,
-                      axisFontSize=16, legendFontSize=16, 
-                      gene=None, sourceData=None):
+                      includeCriteria=None, similarityBounds=None, xBounds=None, yBounds=None,
+                      axisFontSize=16, legendFontSize=16, titleFontSize=36, title="",
+                      gene=None, sourceData=None, plotInRow=False):
 
     if annotations is None:
         annotations = topObject.annotations
@@ -361,14 +377,19 @@ def plot_two_multiple(topObject, projections, celltype1, celltype2, annotations=
 
     # Get subplots
     subsetCount = len(subsetNames)
-    dimX = math.ceil(math.sqrt(subsetCount))
-    dimY = math.ceil(subsetCount / dimX)
-    fig, axes = plt.subplots(dimX, dimY, figsize=(8 * dimX, 8 * dimY), layout="constrained")
+    if plotInRow:
+        dimY = 1
+        dimX = subsetCount
+    else:
+        dimX = math.ceil(math.sqrt(subsetCount))
+        dimY = math.ceil(subsetCount / dimX)
+    fig, axes = plt.subplots(dimY, dimX, figsize=(12 * dimX, 12 * dimY), layout="constrained")
 
     # Set up label colors and shapes
     colors = list(sns.color_palette("bright")) + list(sns.color_palette())
     markers = ["X", "o", "^", "s", "d", "p", "*",  "<", ">", "v", "H", "h", "D", "x", ".", ",", "1", "2", "3", "4", "+", "|", "_"]
-    labels = [str(label) for label in set(annotations) if label != "Other"]
+    # labels = [str(label) for label in set(annotations) if label != "Other"]
+    labels = [str(label) for label in set(annotations)]
     labelColorMap = {}
     labelMarkerMap = {}
     for i in range(len(labels)):
@@ -396,16 +417,20 @@ def plot_two_multiple(topObject, projections, celltype1, celltype2, annotations=
                 annotations=annotations[subsetCategory==subset],
                 labels=labels,
                 palette=labelColorMap, markers=labelMarkerMap,
-                similarityBounds=similarityBounds,
+                similarityBounds=similarityBounds, xBounds=xBounds, yBounds=yBounds,
                 axisFontSize=axisFontSize, legendFontSize = legendFontSize,
-                gene=gene, plotMultiple=True,
+                gene=gene, plotMultiple=True, plotInRow=plotInRow,
                 geneExpressions=geneExpressions
         )
-        ax.set_xlabel(celltype1, fontsize=16)
-        ax.set_ylabel(celltype2, fontsize=16)
-        ax.set_title(subset, fontsize=16)
+        ax.set_xlabel(celltype1, fontsize=axisFontSize)
+        ax.set_ylabel(celltype2, fontsize=axisFontSize)
+        if not plotInRow:
+            ax.set_title(subset, fontsize=axisFontSize)
+        if plotInRow and i == dimX - 1:
+            ax.legend(title="Source Labels", title_fontsize=axisFontSize, fontsize=legendFontSize, loc="upper right")
 
-
+    fig.suptitle(title, fontsize=titleFontSize)
+    # plt.tight_layout()
     return fig, axes
 
 
@@ -636,7 +661,7 @@ def getLabelColorMap(annotations, includeOther=True):
 
 
 # Create a boxplot of the similarities between any number of sources and a basis
-def similarityBoxplot(ax, similarityMap, sourceKeep=None, basisKeep=None, groupLengths=None, labelIdxStartMap=None):
+def similarityBoxplot(fig, ax, similarityMap, sourceKeep=None, basisKeep=None, groupLengths=None, labelIdxStartMap=None, title="", titleFontSize=36, labelFontSize=18, showOutliers=True):
     # If no specific columns provided, use all columns of similarity map
     if basisKeep is None:
         basisKeep = sorted(similarityMap.keys())
@@ -664,17 +689,17 @@ def similarityBoxplot(ax, similarityMap, sourceKeep=None, basisKeep=None, groupL
     # Plot each set of boxplots
     for i in range(numGroups):
         trueLabel = sourceKeep[i]
-        # trueLabelCount = len(similarityMap[label].keys())
         for j in range(boxesPerGroup):
             label = basisKeep[j]
-            # print(trueLabel)
-            # print(label)
-            # # # # print(list(similarityMap[label].keys()))
-            # print(colors[j] + "\n")
             if trueLabel in similarityMap[label]:
                 currentBoxWidth = widths[i]
                 pos = i + j * currentBoxWidth - (groupWidth / 2) + currentBoxWidth / 2  # Offset positions
-                bp = ax.boxplot(similarityMap[label][trueLabel], positions=[pos], widths=currentBoxWidth, patch_artist=True, medianprops=medianlineprops, boxprops={'edgecolor': 'black'}) #, showmeans=True, meanline=True)
+                # pos = i + j * currentBoxWidth - (groupWidth) + currentBoxWidth / 2  # Offset positions
+                if showOutliers:
+                    bp = ax.boxplot(similarityMap[label][trueLabel], positions=[pos], widths=currentBoxWidth, patch_artist=True, medianprops=medianlineprops, boxprops={'edgecolor': 'black'}, flierprops=dict(marker='o', markersize=2, markerfacecolor='black', fillstyle='full')) #, showmeans=True, meanline=True)
+                else:
+                    bp = ax.boxplot(similarityMap[label][trueLabel], positions=[pos], widths=currentBoxWidth, patch_artist=True, medianprops=medianlineprops, boxprops={'edgecolor': 'black'}, showfliers=False)
+
                 for box in bp['boxes']:
                     box.set(facecolor=colors[j])
             else:
@@ -706,13 +731,18 @@ def similarityBoxplot(ax, similarityMap, sourceKeep=None, basisKeep=None, groupL
     for i in range(1, numGroups):  # Skip first category
         group_border = i - 0.5  # Position of separator between groups
         ax.vlines(x=group_border, ymin=y_min, ymax=y_max,
-                  color='black', linestyle='dashed', linewidth=1)
+                  color='black', linestyle='solid', linewidth=1)
 
-    ax.set_xticklabels(individualLabels, fontsize="large", rotation=45)
-    ax.set_xlabel("Source Labels", weight="bold", fontsize="large")
-    ax.set_ylabel("Similarity Scores", weight="bold", fontsize="large")
+    ax.set_xticklabels(individualLabels, fontsize=labelFontSize, rotation=45)
+    ax.tick_params(labelsize=labelFontSize * 0.7)
+    ax.set_xlabel("Source Labels", weight="bold", fontsize=labelFontSize)
+    ax.set_ylabel("Similarity Scores", weight="bold", fontsize=labelFontSize)
+    ax.axhline(y=0.1, color='black', linestyle='--', linewidth=0.5, dashes=(5, 10))
+    # fig.subplots_adjust(right=13.7)
     ax.legend([plt.Rectangle((0,0),1,1,facecolor=c) for c in colors[:boxesPerGroup]], 
-               basisKeep, loc="upper right", title="Basis Labels")
+               basisKeep, loc="upper left", title="Basis Labels", title_fontsize=labelFontSize*0.9, fontsize=labelFontSize*0.9, bbox_to_anchor=(1.01, 1), borderaxespad=0.)
+    fig.suptitle(title, fontsize=titleFontSize)
+    plt.tight_layout()
 
 
 # Display correlation matrix

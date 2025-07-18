@@ -37,4 +37,16 @@ convert_h5ad_to_Rds(bibekInput, bibekOutput, condaEnvironment=condaEnvironment)
 ```
 
 
+```{r Andrea}
+# path <- '/restricted/projectnb/crem-bioinfo/project_workspace/23_09_11_andrea/calculations/analysis/combined/rds/sc.UO1.Rds'
+# path <- '/restricted/projectnb/crem-bioinfo/project_workspace/23_09_11_andrea/calculations/analysis/combined/rds/sc.Rds'
+# ilm2 <- readRDS(path)
+
+success <- convert_Seurat_to_AnnData(seuratObj=ilm1, condaEnvironment=condaEnvironment, type="rds", outputFile="/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Andrea/objects/iLM.h5ad", assay="RNA")
+
+```
+
+
+
+
 
