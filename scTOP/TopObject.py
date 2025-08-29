@@ -98,7 +98,9 @@ class TopObject:
             conditionMap = {}
 
             if keepTruthValue:  # Filter to include only annotation categories specified
-                conditionMap["Keep"] = self.annotations.isin(self.toKeep if keepTruthValue != "Other" else keep)
+                keep = self.toKeep if keepTruthValue != "Other" else keep
+                conditionMap["Keep"] = self.annotations.isin(keep)
+                # conditionMap["Keep"] = self.annotations.isin(self.toKeep if keepTruthValue != "Other" else keep)
 
             if excludeTruthValue:  # Filter to include all annotation categories except those specified
                 conditionMap["Exclude"] = ~self.annotations.isin(self.toExclude if excludeTruthValue != "Other" else exclude)
@@ -128,7 +130,7 @@ class TopObject:
         self.metadata = self.anndata.obs
         self.annotations = self.metadata[self.cellTypeColumn]
         self.sortedCellTypes = sorted(list(set(self.annotations)))
-        self.filteredAnnotations = [label if (label in self.toKeep and label not in self.toExclude) else "Other" for label in self.annotations]
+        # self.filteredAnnotations = [label if (label in self.toKeep and label not in self.toExclude) else "Other" for label in self.annotations]
         self.timeSortFunction = None
         self.timesSorted = None
         if self.timeColumn is not None and self.timeColumn != "":
@@ -160,7 +162,8 @@ class TopObject:
         print("Projecting onto basis...")
         projection = top.score(basis, self.processedData)
         self.projections[projectionName] = projection
-        print("Finished projecting!")
+        overlap = np.intersect1d(basis.index, self.processedData.index)
+        print("Finished projecting! " + str(len(overlap)) + " genes were in both the source and basis.")
         return projection
 
     # Using any dataset with well-defined clusters, set it as a basis
@@ -232,7 +235,7 @@ class TopObject:
         return combinedBasis
 
     # Test an existing basis (not combined). Optionally adjust the minimum accuracy threshold
-    def testBasis(self, specification_value=0.1, holdouts=0.2, threshold=200, seed=1):
+    def testBasis(self, specificationValue=0.1, holdouts=0.2, threshold=200, seed=1):
 
         # Setting basis with holdouts for testing
         basis, trainingIDs = self.setBasis(holdouts=holdouts, threshold=threshold, seed=seed)
@@ -249,11 +252,11 @@ class TopObject:
         predictions["Top1"] = []
         predictions["Top3"] = []
 
-        for sample_IDs in tqdm(splitIDs):
-            test_data = self.df[sample_IDs]
+        for sampleIds in tqdm(splitIDs):
+            test_data = self.df[sampleIds]
             test_processed = top.process(test_data)
             test_projections = top.score(basis, test_processed)
-            accuracies, predictions = self.scoreProjections(test_projections, accuracies, predictions, specification_value=specification_value)
+            accuracies, predictions = self.scoreProjections(test_projections, accuracies, predictions, specificationValue=specificationValue)
             del test_data
             del test_processed
             del test_projections
@@ -265,14 +268,14 @@ class TopObject:
         return self.testResults[0]
 
     # Get the metrics for a given projection. Optionally adjust the minimum accuracy threshold
-    def scoreProjections(self, projections, accuracies, predictions, specification_value=0.1): # cells with maximum projection under specification_value are considered "unspecified"
+    def scoreProjections(self, projections, accuracies, predictions, specificationValue=0.1): # cells with maximum projection under specificationValue are considered "unspecified"
 
-        for sample_id, sample_projections in projections.items():
-            types_sorted_by_projections = sample_projections.sort_values(ascending=False).index
-            true_type = self.metadata.loc[sample_id, self.cellTypeColumn]
+        for sampleId, sampleProjections in projections.items():
+            types_sorted_by_projections = sampleProjections.sort_values(ascending=False).index
+            true_type = self.metadata.loc[sampleId, self.cellTypeColumn]
             top_type = types_sorted_by_projections[0]
 
-            if sample_projections.max() < specification_value:
+            if sampleProjections.max() < specificationValue:
                 accuracies['Unspecified'] += 1
                 top_type = 'Unspecified'
 
@@ -290,23 +293,29 @@ class TopObject:
         return accuracies, predictions
 
     # Create correlation matrix between cell types of basis, helpful to determine if any features are overlapping
-    def getBasisCorrelations(self):
-        self.corr = self.basis.T.dot(self.basis) / self.basis.shape[0]
+    def getBasisCorrelations(self, specificBasis=None):
+        basis = self.basis if specificBasis is None else specificBasis
+        corr = basis.T.dot(basis) / basis.shape[0]
+        self.corr = specificBasis
+        return corr
 
     # Create predictivity matrix to assess impact of cell type on gene expression
-    def getBasisPredictivity(self):
-        eta = np.linalg.inv(self.corr).dot(self.basis.T) / self.basis.shape[0]
-        self.predictivity = pd.DataFrame(eta, index=self.basis.columns, columns=self.basis.index)
+    def getBasisPredictivity(self, specificBasis=None):
+        basis = self.basis if specificBasis is None else specificBasis
+        corr = self.corr if specificBasis is None else self.getBasisCorrelations(specificBasis=specificBasis)
+        eta = np.linalg.inv(corr).dot(basis.T) / basis.shape[0]
+        self.predictivity = pd.DataFrame(eta, index=basis.columns, columns=basis.index)
+        return self.predictivity
 
     # Create score contribution matrix displaying product of predictivity and normalized expression
-    def getScoreContributions(self, predictivityMatrix=None, subsetCategory=None, subsetName=None):
+    def getScoreContributions(self, specificBasis=None, subsetCategory=None, subsetName=None):
         scoreContributions = {}
         if subsetCategory is not None and subsetName is not None:
             labelExpression = top.process(self.df.loc[:, subsetCategory == subsetName])
         else:
             labelExpression = self.processedData if hasattr(self, "processedData") else self.processDataset()
 
-        predictivityMatrix = predictivityMatrix if predictivityMatrix is not None else self.predictivity
+        predictivityMatrix = self.predictivity if specificBasis is None else self.getBasisPredictivity(specificBasis=specificBasis)
         for label in predictivityMatrix.index:
             scoreContributions[label] = {}
             commonGenes = np.intersect1d(labelExpression.index, predictivityMatrix.columns)
@@ -314,6 +323,22 @@ class TopObject:
 
         self.scoreContributions = scoreContributions
         return scoreContributions
+
+    # Given a projection and a cell type in the basis, change annotation in source to reflect top labels of that cell type
+    def newCellTypeCatFromProjection(self, projection, target, newCategoryName, newLabelName=None, specificationValue=0.1):
+        newLabelName = newLabelName or target
+        targetCells = []
+        for sample in self.df.columns:
+            if projection.loc[:, sample].idxmax() == target and projection.loc[target, sample] > specificationValue:
+                targetCells.append(sample)
+        self.metadata[newCategoryName] = self.annotations
+        self.metadata[newCategoryName] = self.metadata[newCategoryName].cat.add_categories([newLabelName])
+
+        for sample in targetCells:
+            self.metadata.loc[sample, newCategoryName] = newLabelName
+
+        self.cellTypeColumn = newCategoryName
+        self.annotations = self.metadata[self.cellTypeColumn]
 
 
 # Add or update an entry to a summary file containing metadata regarding datasets
@@ -370,6 +395,8 @@ def dynamicAddDataset(summaryFile=None):
 def processInput(message, followUpMessage=None, isFile=False, isList=False, isBool=False, isRequired=False):
     while True:
         userInput = input(message)
+        truthValue = getTruthValue(userInput)
+
         if userInput == "Q":
             sys.exit()
         elif userInput == "":
@@ -383,26 +410,26 @@ def processInput(message, followUpMessage=None, isFile=False, isList=False, isBo
             else:
                 print("No file found at path: " + userInput)
         elif isBool:
-            truthValue = getTruthValue(userInput)
             if type(truthValue) is bool:
-                userInput = truthValue
-                break
+                return truthValue
             else:
                 print("Enter a valid true/false value")
+        elif isList:
+            entryList = []
+            if not truthValue:
+                break
+            else:
+                if truthValue != "Other":
+                    while True:
+                        entry = input(followUpMessage)
+                        if entry == "Q":
+                            sys.exit()
+                        elif entry == "":
+                            return entryList
+                        entryList.append(entry)
         else:
             break
 
-    if isList and userInput != "":
-        entryList = []
-        if userInput:
-            while True:
-                entry = input(followUpMessage)
-                if entry == "Q":
-                    sys.exit()
-                elif entry == "":
-                    break
-                entryList.append(entry)
-        userInput = entryList
     return userInput
 
 
@@ -421,26 +448,3 @@ def getTruthValue(val):
         return "Other"
     return "Other"
 
-
-# Queries user for values to add to list if input is True
-def getValueList(userInput, message):
-    if getTruthValue(userInput):
-        entryList = []
-        while True:
-            entry = input(message)
-            if entry == "":
-                break
-            entryList.append(entry)
-    else:
-        entryList = []
-    return entryList
-
-
-# Queries user for file until valid path provided 
-def getValidatedFile(file, message):
-    while True:
-        file = input(message)
-        if os.path.exists(file):
-            break
-        else:
-            print("No file found at path: " + file)
