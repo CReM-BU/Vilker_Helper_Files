@@ -31,9 +31,9 @@ success <- convert_Seurat_to_AnnData(seuratObj=Vannan, condaEnvironment=condaEnv
 ```
 
 ```{r AnnData to Seurat}
-bibekInput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/BibekPneumonectomy/objects/Bibek.h5ad"
-bibekOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/BibekPneumonectomy/objects/Bibek.rds"
-convert_h5ad_to_Rds(bibekInput, bibekOutput, condaEnvironment=condaEnvironment)
+input <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Habermann.h5ad"
+output <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/Seurat/Habermann.rds"
+convert_h5ad_to_Rds(input, output, condaEnvironment=condaEnvironment)
 ```
 
 
@@ -47,10 +47,13 @@ success <- convert_Seurat_to_AnnData(seuratObj=ilm1, condaEnvironment=condaEnvir
 ```
 
 ```{r CurrentUsage}
-kostasOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/KostasMurine2025.h5ad"
-# tsukuiOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/TsukuiHuman.h5ad"
+andreaOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Andrea/objects/iLMSingle.h5ad"
+andreaInput <- "/restricted/projectnb/crem-bioinfo/project_workspace/23_09_11_andrea/calculations/analysis/C11andiLM/rds/sc.Rds"
+input2 <- "/restricted/projectnb/crem-bioinfo/project_workspace/23_09_11_andrea/calculations/analysis/combined_subset1_onlyC11andiLM/rds/sc.Rds"
+andrea <- readRDS(andreaInput)
+andrea2 <- readRDS(input2)
 # andreaOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Andrea/objects/Primary_3_14_24.h5ad"
-success <- convert_Seurat_to_AnnData(seuratObj=KostasMurine, condaEnvironment=condaEnvironment, type="rds", outputFile=kostasOutput, assay="RNA")
+success <- convert_Seurat_to_AnnData(seuratObj=andrea2, condaEnvironment=condaEnvironment, type="rds", outputFile=andreaOutput, assay="RNA")
 
 ```
 

@@ -22,15 +22,13 @@ class TopObject:
             self.cellTypeColumn, self.toKeep, self.toExclude, self.filePath, self.timeColumn, self.duplicates, self.raw, self.layer = datasetInfo
             self.raw = getTruthValue(self.raw)
             self.duplicates = getTruthValue(self.duplicates)
-        else:
-            # Prompt to manually add dataset info
-            pass
-        self.toKeep = self.toKeep[1:-1].replace("'", "").split(", ") if type(self.toKeep) is str and len(self.toKeep) > 0 else self.toKeep
-        self.toExclude = self.toExclude[1:-1].replace("'", "").split(", ") if type(self.toExclude) is str and len(self.toExclude) > 0 else self.toExclude
+            self.toKeep = self.toKeep[1:-1].replace("'", "").split(", ") if type(self.toKeep) is str and len(self.toKeep) > 0 else self.toKeep
+            self.toExclude = self.toExclude[1:-1].replace("'", "").split(", ") if type(self.toExclude) is str and len(self.toExclude) > 0 else self.toExclude
+            if not manualInit:  # In case you want to adjust any of the parameters first
+                self.setup(useAverage=useAverage, skipProcess=skipProcess, keep=keep, exclude=exclude)
+
         self.projections = {}
         self.basis = None
-        if not manualInit:  # In case you want to adjust any of the parameters first
-            self.setup(useAverage=useAverage, skipProcess=skipProcess, keep=keep, exclude=exclude)
 
     # Summary of parameters upon printing object
     def __str__(self):
@@ -85,7 +83,10 @@ class TopObject:
         print("Setting DataFrame...")
         self.setDF()
         if not skipProcess:
-            self.processDataset(useAverage=useAverage)
+            try:
+                self.processDataset(useAverage=useAverage)
+            except:
+                print("Processing dataset for scTOP failed! The rest of the TopObject has been preserved.")
         print("Finished setup!")
 
     # Set TopObject to include or exclude cells with certain labels
@@ -100,7 +101,6 @@ class TopObject:
             if keepTruthValue:  # Filter to include only annotation categories specified
                 keep = self.toKeep if keepTruthValue != "Other" else keep
                 conditionMap["Keep"] = self.annotations.isin(keep)
-                # conditionMap["Keep"] = self.annotations.isin(self.toKeep if keepTruthValue != "Other" else keep)
 
             if excludeTruthValue:  # Filter to include all annotation categories except those specified
                 conditionMap["Exclude"] = ~self.annotations.isin(self.toExclude if excludeTruthValue != "Other" else exclude)
@@ -296,13 +296,13 @@ class TopObject:
     def getBasisCorrelations(self, specificBasis=None):
         basis = self.basis if specificBasis is None else specificBasis
         corr = basis.T.dot(basis) / basis.shape[0]
-        self.corr = specificBasis
+        self.corr = corr if specificBasis is None else self.corr
         return corr
 
     # Create predictivity matrix to assess impact of cell type on gene expression
     def getBasisPredictivity(self, specificBasis=None):
         basis = self.basis if specificBasis is None else specificBasis
-        corr = self.corr if specificBasis is None else self.getBasisCorrelations(specificBasis=specificBasis)
+        corr = self.corr if specificBasis is None and self.corr is not None else self.getBasisCorrelations(specificBasis=specificBasis)
         eta = np.linalg.inv(corr).dot(basis.T) / basis.shape[0]
         self.predictivity = pd.DataFrame(eta, index=basis.columns, columns=basis.index)
         return self.predictivity
@@ -339,6 +339,7 @@ class TopObject:
 
         self.cellTypeColumn = newCategoryName
         self.annotations = self.metadata[self.cellTypeColumn]
+        return self.annotations
 
 
 # Add or update an entry to a summary file containing metadata regarding datasets
