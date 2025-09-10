@@ -18,8 +18,8 @@ I have set up a conda environment with all the libraries you should need to run 
 5. Click File -> New -> Notebook
 6. Click Select Kernel in the top right and select scTOP
 7. Go to the first vignette in the scTOP folder
-8. Copy and paste the contents of the first cell (with # Load libraries in Line 1) into the top cell of your file
-9. Press Control + Enter to run the cell
+8. Copy and paste the contents of the first block (with # Load libraries in Line 1) into the top block of your file
+9. Press Control + Enter to run the block
 
 ## Core Functionality
 To simplify usage of scTOP, I have created the TopObject class to store common functions and variables
@@ -34,3 +34,7 @@ The following functions are useful for generating figures flexibly. There are ma
 1. To view a dataset's projection against two cell types in the basis, run `SimilarityHelper.plotTwo([objectName].projections["[basisDescription]"], [objectName].annotations, [basisCelltype1], [basisCelltype2])`. Options include to view gene expressions or supervised or unsupervised contours.
 2. To view how a projection changes over time, run `SimilarityHelper.plotTwoMultiple([objectName], [objectName].projections["[basisDescription]"], [basisCelltype1], [basisCelltype2])`. The same options as for plotTwo apply.
 3. To view a boxplot of all the cell types in the source against all the cell types in the basis, run TODO:`SimilarityHelper.similai
+
+## Creating AnnData Objects from Seurat
+1. Copy the file CrossPlatformConversions/seuratAnnDataConversions.R (look at ConversionVignettes.Rmd for usage examples)
+2. Run `convertSeuratToAnnData`, passing in "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/.conda/envs/scTOP" for condaEnvironment, the file extension for type, the seurat object to seuratObj or the file name to inputFile, the name of the AnnData file being written (end with ".h5ad") to outputFile, a layer name to mainLayer if you want to select one other than counts, and an assay name to assay if you want to select one other than RNA.
