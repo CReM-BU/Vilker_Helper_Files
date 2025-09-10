@@ -9,7 +9,7 @@
 4. Enter these parameters: python3 for List of modules to load, lab for Interface, and the folder and project you are assigned to work in for Working Directory and Project
 5. Click Launch, then Connect to Jupyter after waiting a little for it to set up
 
-### Prepare Coding Packages
+### Prepare Coding Packages (One Time Only)
 I have set up a conda environment with all the libraries you should need to run these analyses.
 1. Click File -> New -> Terminal
 2. In the terminal, run `module unload python3`
