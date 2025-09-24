@@ -33,7 +33,6 @@ To simplify usage of scTOP, I have created the TopObject class to store common f
 The following functions are useful for generating figures flexibly. There are many optional parameters you may wish to use; check out PlottingFunctions.md or the actual functions at SimilarityHelper.py and TopObject.py to see all the options available to you.
 1. To view a dataset's projection against two cell types in the basis, run `SimilarityHelper.plotTwo([objectName].projections["[basisDescription]"], [objectName].annotations, [basisCelltype1], [basisCelltype2])`. Options include to view gene expressions or supervised or unsupervised contours.
 2. To view how a projection changes over time, run `SimilarityHelper.plotTwoMultiple([objectName], [objectName].projections["[basisDescription]"], [basisCelltype1], [basisCelltype2])`. The same options as for plotTwo apply.
-3. To view a boxplot of all the cell types in the source against all the cell types in the basis, run TODO:`SimilarityHelper.similai
 
 ## Creating AnnData Objects from Seurat
 1. Copy the file CrossPlatformConversions/seuratAnnDataConversions.R (look at ConversionVignettes.Rmd for usage examples)
