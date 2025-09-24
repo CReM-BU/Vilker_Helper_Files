@@ -28,6 +28,7 @@ To simplify usage of scTOP, I have created the TopObject class to store common f
 3. To project onto a basis, run `[objectName].projectOntoBasis(basis, ["basisDescription"])`. The projection can then be found at `[objectName].projection["basisDescription"]`
 4. To combine bases, run `[objectName].combineBases(otherBasis, name=["basisDescription"])`. Inlude firstKeep or secondKeep as parameters if you want to choose specific cell types in either basis to include. The combined basis can then be found at `[objectName].combinedBases["basisDescription"]`
 5. To test a basis, run `[objectName].testBasis()`
+6. To add a new dataset to a summary file, after copying DatasetInformation.csv or making your own version of it and creating an AnnData object for your dataset, run `TopObject.dynamicAddDataset(summaryFile=["summaryFileName"])` and input information according to the prompts, clicking Enter to skip a prompt and Q to quit and revert changes 
 
 ## Plotting Functions
 The following functions are useful for generating figures flexibly. There are many optional parameters you may wish to use; check out PlottingFunctions.md or the actual functions at SimilarityHelper.py and TopObject.py to see all the options available to you.
