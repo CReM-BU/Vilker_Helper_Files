@@ -22,6 +22,9 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import confusion_matrix
 from sklearn import preprocessing
 from scipy.sparse import csr_matrix
+import os
+os.environ['SCIPY_ARRAY_API'] = '1'
+from imblearn.under_sampling import RandomUnderSampler
 # import hdf5plugin
 
 
@@ -87,8 +90,8 @@ def loadBasis(file=None, basisCollection=None, basisName=None, filtering=False, 
 
 # Converts files in raw format (straight from GEO usually) to AnnData. Set geneHeader to None if no header
 def rawToAnnData(countsPath, genesPath, metadataPath,
-                 matrix=False, transposeCounts=False, geneSeparator=None, 
-                 metadataSeparator="\t", metadataIndexColumn=None, geneHeader="infer", geneColumnIdx=0):
+                 matrix=False, transposeCounts=False, geneSeparator="\t",
+                 metadataSeparator="\t", metadataIndexColumn=None, geneHeader="infer", geneColumnIdx=0, skipMeadataRow=None, skipCountsRow=None):
     # Set counts
     print("Setting counts...")
     counts = sc.read_mtx(countsPath) if matrix else ad.AnnData(pd.read_csv(countsPath))
@@ -99,38 +102,49 @@ def rawToAnnData(countsPath, genesPath, metadataPath,
         return None
 
     # Set metadata
-    try:
-        print("Setting metadata...")
-        metadata = pd.read_csv(metadataPath, sep=metadataSeparator)
-        metadata.set_index(metadataIndexColumn or metadata.columns[0], inplace=True)
-        annObject.obs = metadata
-        annObject.obs.index.names = ["index"]
-    except:
-        print("Something went wrong setting metadata!")
+    if metadataPath is not None:
+        try:
+            print("Setting metadata...")
+            metadata = pd.read_csv(metadataPath, sep=metadataSeparator) if skipRow is None else pd.read_csv(metadataPath, sep=metadataSeparator, skiprows=[skipRow])
+            metadata.replace(np.nan, '', inplace=True)
+            metadata.set_index(metadataIndexColumn or metadata.columns[0], inplace=True)
+            annObject.obs = metadata
+            annObject.obs.index.names = ["index"]
+        except:
+            print("Something went wrong setting metadata!")
+            return annObject
 
     # Set genes
     try:
         print("Setting genes...")
         genes = pd.read_csv(genesPath, sep=geneSeparator, header=geneHeader)
-        genes.columns[geneColumnIdx] = ["name"]
+        # genes.columns[geneColumnIdx] = ["name"]
+        genes.rename(columns={genes.columns[geneColumnIdx]: "name"}, inplace=True)
         genes.set_index("name", inplace=True)
         annObject.var = genes
         annObject.var.index.names = ["index"]
     except:
         print("Something went wrong setting genes!")
+        return annObject
+
+    print("Done!")
     return annObject
 
 
 # Write an AnnData object to an h5ad file
-def writeAnnDataObject(annDataObj, outFile):
-    obj = annDataObj
+def writeAnnData(annDataObj, outFile, indexReplace=None):
+    obj = annDataObj.copy()
+    print("Setting X as csr_matrix...")
     obj.X = csr_matrix(obj.X)
     # varFrame = pd.DataFrame(index=obj.var.index)
     # obj.var.index = varFrame
     # obj.var.drop(columns=obj.var.columns, inplace=True)
     if obj.raw is not None:
-        obj._raw._var.rename(columns={'_index': 'index'}, inplace=True)
-        obj.raw.var.index.name(columns={'_index': 'index'}, inplace=True)
+        print("Setting raw...")
+        if indexReplace is not None:
+            obj._raw._var.rename(columns={indexReplace: 'index'}, inplace=True)
+            obj.raw.var.index.name(columns={indexReplace: 'index'}, inplace=True)
+    print("Writing h5ad...")
     obj.write_h5ad(outFile)
     print("Finished!")
 
@@ -263,6 +277,16 @@ def setMarkers(labels):
     return markers
 
 
+# Gets a dict for passing in numbers of each cell type to downsampling function
+def getLabelCountsMap(annotations, maxCount=None):
+    labelCountsMap = {}
+    valueCounts = annotations.value_counts()
+    for label in set(annotations):
+        count = int(valueCounts[label])
+        labelCountsMap[label] = count if maxCount is None or count < maxCount else maxCount
+    return labelCountsMap
+
+
 # Create scatter plot showing projections of each cell in a UMAP plot, for a given cell type
 def plot_UMAP(projections, embedding, cell_type, ax=None, **kwargs):
     ax = ax or plt.gca()
@@ -306,10 +330,10 @@ def plot_top(projections, tSNE_data, minimum_cells=50, ax=None, **kwargs):
 
 # Create scatter plot showing projection scores for two cell types, with the option to color according to marker gene
 def plotTwo(projections, annotations, celltype1, celltype2,
-             gene=None, plotMultiple=False, unsupervisedContour=False, supervisedContour=False,
+             gene=None, plotMultiple=False, unsupervisedContour=False, supervisedContour=False, maxLabelCount=None,
              geneExpressions=None, ax=None, figX=8, figY=8, includeCriteria=None,
              hue=None, labels=None, palette=None, markers=True, markerSize=40, legendMarkerScale=2,
-             xBounds=None, yBounds=None, plotInRow=False,
+             xBounds=None, yBounds=None, plotInRow=False, seed=0,
              axisFontSize=15, legendFontSize=13, title="", outFile=None):
 
     # Filter annotations and/or projections if chosen
@@ -317,6 +341,12 @@ def plotTwo(projections, annotations, celltype1, celltype2,
         annotations = np.array(annotations)[includeCriteria]
         projections = projections.loc[:, includeCriteria]
         geneExpressions = geneExpressions.loc[:, includeCriteria] if gene else None
+
+    # Undersample some cell types based on a count maximum
+    if maxLabelCount is not None:
+        rus = RandomUnderSampler(sampling_strategy=getLabelCountsMap(annotations, maxCount=maxLabelCount), random_state=seed)
+        projectionsUntransposed, annotations = rus.fit_resample(projections.T, annotations)
+        projections = projectionsUntransposed.T
 
     labels = labels or [str(label) for label in set(annotations)]
 
@@ -327,7 +357,7 @@ def plotTwo(projections, annotations, celltype1, celltype2,
     y = projections.loc[celltype2]
 
     if gene:  # If labeling by gene expression instead of source labels
-        ax = geneExpressionPlot(ax, x, y, gene, geneExpressions, annotations, palette, markerSize=markerSize, alpha=0.5, axisFontSize=axisFontSize)
+        ax = geneExpressionPlot(ax, x, y, gene, geneExpressions, annotations, palette, markerSize=markerSize, alpha=0.5, axisFontSize=axisFontSize, plotMultiple=plotMultiple)
     else:  # If labeling is by cell type
         ax = sourceLabelPlot(ax, x, y, annotations, labels, palette=palette, markers=markers, markerSize=markerSize, legendMarkerScale=legendMarkerScale, axisFontSize=axisFontSize, legendFontSize=legendFontSize, plotMultiple=plotMultiple)
 
@@ -354,21 +384,21 @@ def plotTwo(projections, annotations, celltype1, celltype2,
 
     if plotMultiple:
         ax.set_aspect('equal')
-        return ax
 
-    plt.tight_layout()
-    if outFile is not None:
-        plt.savefig(outFile, bbox_inches='tight')
-    plt.show()
+    else:
+        plt.tight_layout()
+        if outFile is not None:
+            plt.savefig(outFile, bbox_inches='tight')
+        # plt.show()
 
 
 # Craetes a Seaborn 2D scatter plot using projections onto basis columns as axes and gene expressions to identify points. Helper for plotTwo
 def geneExpressionPlot(ax, x, y, gene, geneExpressions, annotations, palette, markerSize=40, alpha=0.5, plotMultiple=False, axisFontSize=15):
-    palette, scalarmap = createColorbar(geneExpressions.loc[gene]) if not palette else (palette, None)
+    palette, scalarmap = createColorbar(geneExpressions.loc[gene]) if palette is None else (palette, None)
     plot = sns.scatterplot(x=x, y=y, hue=geneExpressions.loc[gene], palette=palette, alpha=alpha, 
                            ax=ax, s=markerSize, style=annotations)
     if not plotMultiple:
-        cbar = plt.colorbar(scalarmap, ax=ax)
+        cbar = plt.colorbar(scalarmap, ax=ax) # scalarmap won't be defined unless palette wasn't, which is only in single plot
         cbar.ax.tick_params(labelsize=axisFontSize // 1.3)
         cbar.set_label('{} expression'.format(gene), size=axisFontSize, labelpad=20)
 
@@ -408,10 +438,11 @@ def supervisedContourPlot(ax, x, y, annotations, labels, palette=None):
 
 
 # Plot multiple 2D similarity plots at once based on some field, such as time (Note: figure out difference if any between labels and annotations[toInclude])
-def plotTwoMultiple(topObject, projections, celltype1, celltype2, annotations=None, subsetCategory=None, subsetNames=None, 
-                      gene=None, includeCriteria=None, unsupervisedContour=False, supervisedContour=False, similarityBounds=None,
-                      xBounds=None, yBounds=None, plotInRow=False, axisFontSize=24, legendFontSize=24,
-                      legendMarkerScale=0.5, markerSize=40, titleFontSize=36, title="", caption=None, outFile=None):
+def plotTwoMultiple(topObject, projections, celltype1, celltype2,
+                    annotations=None, subsetCategory=None, subsetNames=None, gene=None, includeCriteria=None,
+                    unsupervisedContour=False, supervisedContour=False, maxLabelCount=None, seed=None,
+                    xBounds=None, yBounds=None, plotInRow=False, axisFontSize=24, legendFontSize=24,
+                    legendMarkerScale=0.5, markerSize=40, titleFontSize=36, title="", caption=None, outFile=None):
 
     # Initialize categories if left empty
     annotations = annotations or topObject.annotations
@@ -429,16 +460,17 @@ def plotTwoMultiple(topObject, projections, celltype1, celltype2, annotations=No
 
     # Set up label colors and shapes
     labels = [str(label) for label in set(annotations)]
+    labelMarkerMap = setMarkers(labels)
+
     if gene:
         geneExpressions = topObject.processedData
         palette, scalarmap = createColorbar(geneExpressions.loc[gene])
     else:
         palette = setPalette(labels)
-    labelMarkerMap = setMarkers(labels)
-    legendItems = []
-    for label in labels:
-        legendItems.append(Line2D([0], [0], marker=labelMarkerMap[label], color="w", label=label,
-           markerfacecolor=palette[label], markersize=markerSize))
+        legendItems = []
+        for label in labels:
+            legendItems.append(Line2D([0], [0], marker=labelMarkerMap[label], color="w", label=label,
+               markerfacecolor=palette[label], markersize=markerSize))
 
     # Plot for each subset
     subsetIdx = 0
@@ -449,7 +481,8 @@ def plotTwoMultiple(topObject, projections, celltype1, celltype2, annotations=No
             ax = fig.add_subplot(gs[i, j])
             if subsetIdx == subsetCount:
                 ax.axis("off")  # Hide this axis
-                ax.legend(handles=legendItems, title="Source Labels", title_fontsize=axisFontSize, fontsize=legendFontSize, markerscale=legendMarkerScale, loc='upper left', frameon=False)
+                if not gene:
+                    ax.legend(handles=legendItems, title="Source Labels", title_fontsize=axisFontSize, fontsize=legendFontSize, markerscale=legendMarkerScale, loc='upper left', frameon=False)
                 break
 
             subset = subsetNames[subsetIdx]
@@ -457,9 +490,10 @@ def plotTwoMultiple(topObject, projections, celltype1, celltype2, annotations=No
             subsetGeneExpressions = geneExpressions.loc[:, toInclude] if gene else None
             ax = plotTwo(
                 projections.loc[:, toInclude], annotations[subsetCategory==subset], celltype1, celltype2,
-                ax=ax, labels=labels, palette=palette, markers=labelMarkerMap, markerSize=markerSize, legendMarkerScale=legendMarkerScale, axisFontSize=axisFontSize, legendFontSize = legendFontSize,
-                xBounds=xBounds, yBounds=yBounds, plotInRow=plotInRow,
-                gene=gene, unsupervisedContour=unsupervisedContour, supervisedContour=supervisedContour, plotMultiple=True, geneExpressions=subsetGeneExpressions
+                ax=ax, labels=labels, gene=gene, geneExpressions=subsetGeneExpressions, unsupervisedContour=unsupervisedContour, supervisedContour=supervisedContour,
+                plotMultiple=True, plotInRow=plotInRow, maxLabelCount=maxLabelCount, xBounds=xBounds, yBounds=yBounds, seed=seed,
+                palette=palette, markers=labelMarkerMap, markerSize=markerSize, legendMarkerScale=legendMarkerScale, axisFontSize=axisFontSize, 
+                legendFontSize=legendFontSize
             )
             ax.set_xlabel(celltype1, fontsize=axisFontSize)
             ax.set_ylabel(celltype2, fontsize=axisFontSize)

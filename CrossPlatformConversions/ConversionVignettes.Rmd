@@ -6,44 +6,35 @@ source("seuratAnnDataConversions.R")
 
 ```{r Set Conda Environment}
 # Choose conda environment if desired (use ls -a in bash to see hidden directories and files, such as .conda)
-condaEnvironment <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/.conda/envs/KottonLab"
+# condaEnvironment <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/.conda/envs/KottonLab"
+condaEnvironment <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/.conda/envs/scTOP"
 ```
 
 ```{r Seurat to AnnData - Rds using filename, output file unspecified}
 riemondyInput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Riemondy/Riemondy.Rds"
-success <- convert_Seurat_to_AnnData(condaEnvironment=condaEnvironment, type="Rds", inputFile=riemondyInput)
+success <- convertSeuratToAnnData(condaEnvironment=condaEnvironment, type="Rds", inputFile=riemondyInput)
 ```
 
 ```{r Seurat to AnnData - h5seurat using filename}
 kathiriyaInput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Kathiriya/Kathiriya.h5seurat"
 kathiriyaOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Kathiriya/Kathiriya.h5ad"
-success <- convert_Seurat_to_AnnData(condaEnvironment=condaEnvironment, type="h5seurat", inputFile=kathiriyaInput, assay="spliced")
+success <- convertSeuratToAnnData(condaEnvironment=condaEnvironment, type="h5seurat", inputFile=kathiriyaInput, assay="spliced")
 ```
 
 ```{r Seurat to AnnData - loaded Rds object}
 Vannan <- readRDS("/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/VannanSpatialIPF/Vannan.rds")
 vannanOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/VannanSpatialIPF/VannanRNA.h5ad"
-success <- convert_Seurat_to_AnnData(seuratObj=Vannan, condaEnvironment=condaEnvironment, type="rds", outputFile=vannanOutput, assay="RNA")
+success <- convertSeuratToAnnData(seuratObj=Vannan, condaEnvironment=condaEnvironment, type="rds", outputFile=vannanOutput, assay="RNA")
 
 # With a different assay
 vannanOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/VannanSpatialIPF/VannanNiche.h5ad"
-success <- convert_Seurat_to_AnnData(seuratObj=Vannan, condaEnvironment=condaEnvironment, type="rds", outputFile=vannanOutput, assay="niche")
+success <- convertSeuratToAnnData(seuratObj=Vannan, condaEnvironment=condaEnvironment, type="rds", outputFile=vannanOutput, assay="niche")
 ```
 
 ```{r AnnData to Seurat}
 input <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Habermann.h5ad"
 output <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/Seurat/Habermann.rds"
-convert_h5ad_to_Rds(input, output, condaEnvironment=condaEnvironment)
-```
-
-
-```{r Andrea}
-# path <- '/restricted/projectnb/crem-bioinfo/project_workspace/23_09_11_andrea/calculations/analysis/combined/rds/sc.UO1.Rds'
-# path <- '/restricted/projectnb/crem-bioinfo/project_workspace/23_09_11_andrea/calculations/analysis/combined/rds/sc.Rds'
-# ilm2 <- readRDS(path)
-
-success <- convert_Seurat_to_AnnData(seuratObj=ilm1, condaEnvironment=condaEnvironment, type="rds", outputFile="/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Andrea/objects/iLM.h5ad", assay="RNA")
-
+convertAnnDataToSeurat(input, output, condaEnvironment=condaEnvironment)
 ```
 
 ```{r CurrentUsage}
@@ -53,7 +44,7 @@ input2 <- "/restricted/projectnb/crem-bioinfo/project_workspace/23_09_11_andrea/
 andrea <- readRDS(andreaInput)
 andrea2 <- readRDS(input2)
 # andreaOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Andrea/objects/Primary_3_14_24.h5ad"
-success <- convert_Seurat_to_AnnData(seuratObj=andrea2, condaEnvironment=condaEnvironment, type="rds", outputFile=andreaOutput, assay="RNA")
+success <- convertSeuratToAnnData(seuratObj=andrea2, condaEnvironment=condaEnvironment, type="rds", outputFile=andreaOutput, assay="RNA")
 
 ```
 

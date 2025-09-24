@@ -2,12 +2,19 @@ library(Seurat)
 library(reticulate)
 library(sceasy)
 library(SingleCellExperiment)
+# if (!requireNamespace("remotes", quietly = TRUE)) {
+#   install.packages("remotes")
+# }
+# remotes::install_github("mojaveazure/seurat-disk")
 library(SeuratDisk)
+# library(future)
+# options(future.globals.maxSize = 120000 * 1024^2)
+
 
 ### Note: The functions in this file require AnnData through a Python environment. Conda recommended
 
 # Function to convert a modern Seurat object to AnnData.
-convert_Rds_Seurat_to_h5ad <- function(conversionInput, mainLayer=NULL, transferLayers=NULL, assay="RNA"){
+convertRdsSeuratToAnnData <- function(conversionInput, mainLayer=NULL, transferLayers=NULL, assay="RNA"){
   if (is.null(transferLayers)){ transferLayers <- c("data", "counts", "scale.data") }
   if (is.null(mainLayer)){ mainLayer <- "counts" }
   
@@ -17,14 +24,14 @@ convert_Rds_Seurat_to_h5ad <- function(conversionInput, mainLayer=NULL, transfer
 }
 
 # Function to convert an Robj format Seurat object to AnnData. May need adjusting if there are complications with data vs scaled data, as SeuratDisk's convert function doesn't account for layers
-convert_Robj_Seurat_to_h5ad <- function(conversionInput, outFile, assay="RNA"){  
+convertRobjSeuratToAnnData <- function(conversionInput, outFile, assay="RNA"){  
   intermediateFile <- paste0(conversionInput$outFile, ".h5seurat")
   SaveH5Seurat(conversionInput$obj, filename=intermediateFile, overwrite = TRUE)
-  return(convert_h5seurat_Seurat_to_h5ad(intermediateFile, assay=assay))
+  return(convertH5seuratSeuratToAnnData(intermediateFile, assay=assay))
 }
 
 # Function to convert an h5seurat file to AnnData. Note that it will automatically use the same name and place, just a different suffix
-convert_h5seurat_Seurat_to_h5ad <- function(conversionInput, assay="RNA"){
+convertH5seuratSeuratToAnnData <- function(conversionInput, assay="RNA"){
   Convert(conversionInput$inFile, dest="h5ad", overwrite = TRUE, assay=assay)
   return(1)
 }
@@ -72,7 +79,7 @@ getFilenameWithoutExtension <- function(filename){
 ## transferLayers: Which layers should be transferred along with the main layers. By default, includes data and scale.data
 ## assay: Which assay type from which to extract the layers. By default RNA, but SCT and other types like spliced exist
 # which typically will refer to how the data were transformed
-convert_Seurat_to_AnnData <- function(condaEnvironment=NULL, type="Rds", inputFile=NULL, outputFile=NULL, seuratObj=NULL, mainLayer=NULL, transferLayers=NULL, assay="RNA"){
+convertSeuratToAnnData <- function(condaEnvironment=NULL, type="Rds", inputFile=NULL, outputFile=NULL, seuratObj=NULL, mainLayer=NULL, transferLayers=NULL, assay="RNA"){
 
   # Initialize parameters
   if (type == "rds"){ type <- "Rds" }
@@ -80,14 +87,14 @@ convert_Seurat_to_AnnData <- function(condaEnvironment=NULL, type="Rds", inputFi
   conversionInput <- getSeuratInputIfValid(type, inputFile=inputFile, outputFile=outputFile, seuratObj=seuratObj)
   if (is.null(conversionInput)){ return(0) }
     
-  if (type == "Rds"){ success <- convert_Rds_Seurat_to_h5ad(conversionInput, mainLayer=mainLayer, transferLayers=transferLayers, assay=assay) }
-  else if (type == "h5seurat"){ success <- convert_h5seurat_Seurat_to_h5ad(conversionInput, assay=assay) }
-  else if (type == "Robj"){ success <- convert_Robj_Seurat_to_h5ad(conversionInput, assay=assay) }
+  if (type == "Rds"){ success <- convertRdsSeuratToAnnData(conversionInput, mainLayer=mainLayer, transferLayers=transferLayers, assay=assay) }
+  else if (type == "h5seurat"){ success <- convertH5seuratSeuratToAnnData(conversionInput, assay=assay) }
+  else if (type == "Robj"){ success <- convertRobjSeuratToAnnData(conversionInput, assay=assay) }
   return(success)
 }
 
 # Function to convert an AnnData object (h5ad) to Seurat (rds)
-convert_h5ad_to_Rds <- function(filename, outFile, condaEnvironment=NULL){
+convertAnnDataToSeurat <- function(filename, outFile, condaEnvironment=NULL){
   if (!is.null(condaEnvironment)){ reticulate::use_condaenv(condaenv=condaEnvironment, required = TRUE) }
   sceasy::convertFormat(filename, from="anndata", to="seurat", outFile=outFile)
 }

@@ -38,7 +38,7 @@ class TopObject:
         for key in keys:
             value = attributeMap[key]
             valueType = type(value)
-            if valueType is str or valueType is bool or valueType is np.bool:
+            if (valueType is str and value != "") or valueType is bool or valueType is np.bool:
                 toReturn += "\n" + key + ": " + str(value)
             elif valueType is list or valueType is np.ndarray:
                 if len(value) > 0 and type(value[0]) is np.ndarray:
@@ -48,7 +48,7 @@ class TopObject:
                 toReturn += "\n" + key + ": " + str(list(value.columns)[:5]) + "..."
             elif valueType is pd.core.series.Series:
                 toReturn += "\n" + key + ": " + str(list(value)[:5]) + "..."
-            elif value is None:
+            elif value is None or (valueType is str and value == ""):
                 toReturn += "\n" + key + ": None"
             else:
                 toReturn += "\n" + key + ": " + str(valueType)
@@ -141,7 +141,7 @@ class TopObject:
     def setDF(self, layer=None):
         if self.raw and self.raw != "Other":  # Check to use raw data
             print("Using raw data...")
-            self.df = pd.DataFrame(self.anndata.raw.X.toarray(), index = self.metadata.index, columns = self.anndata.raw.var_names).T
+            self.df = pd.DataFrame(self.anndata.raw.X.toarray(), index=self.metadata.index, columns=self.anndata.raw.var_names).T
 
         else:
             layer = self.layer if getTruthValue(layer) != "Other" and getTruthValue(self.layer) == "Other" else None  # Check to use layer other than default
