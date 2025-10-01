@@ -15,11 +15,12 @@ I have set up a conda environment with all the libraries you should need to run 
 2. In the terminal, run `module unload python3`
 3. Run `module load miniconda`
 4. Run `mamba env create -f /restricted/projectnb/crem-trainees/Kotton_Lab/Vilker_Helper_Files/scTOP/scTOP.yml`
-5. Click File -> New -> Notebook
-6. Click Select Kernel in the top right and select scTOP
-7. Go to the first vignette in the scTOP folder
-8. Copy and paste the contents of the first block (with # Load libraries in Line 1) into the top block of your file
-9. Press Control + Enter to run the block
+5. Run `python -m ipykernel install --user --name=scTOP`
+6. Click File -> New -> Notebook
+7. Click Select Kernel in the top right and select scTOP
+8. Go to the first vignette in the scTOP folder
+9. Copy and paste the contents of the first block (with # Load libraries in Line 1) into the top block of your file
+10. Press Control + Enter to run the block
 
 ## Core Functionality
 To simplify usage of scTOP, I have created the TopObject class to store common functions and variables
