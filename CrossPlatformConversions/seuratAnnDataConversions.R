@@ -17,9 +17,18 @@ library(SeuratDisk)
 convertRdsSeuratToAnnData <- function(conversionInput, mainLayer=NULL, transferLayers=NULL, assay="RNA"){
   if (is.null(transferLayers)){ transferLayers <- c("data", "counts", "scale.data") }
   if (is.null(mainLayer)){ mainLayer <- "counts" }
+  obj <- conversionInput$obj
   
-  sceasy::convertFormat(conversionInput$obj, from="seurat", to="anndata", outFile=paste0(conversionInput$outFile, ".h5ad"), 
-                        main_layer=mainLayer, transfer_layers=transferLayers, assay=assay)
+  # Because sceasy doesn't support v5, convert to v3
+  if (substr(Version(obj), 1, 1) == "5"){ 
+    if (mainLayer != "data") { dataLayer <- NULL} else {dataLayer <- obj[[assay]]$data}
+    obj[[mainLayer]] <- CreateAssayObject(
+      counts = obj[[assay]]$counts,
+      # data = dataLayer
+    )
+  }
+  # sceasy::convertFormat(obj, from="seurat", to="anndata", outFile=paste0(conversionInput$outFile, ".h5ad"), 
+                        # main_layer=mainLayer, transfer_layers=transferLayers, assay=assay)
   return(1)
 }
 

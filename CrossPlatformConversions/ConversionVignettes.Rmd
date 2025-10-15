@@ -6,8 +6,8 @@ source("seuratAnnDataConversions.R")
 
 ```{r Set Conda Environment}
 # Choose conda environment if desired (use ls -a in bash to see hidden directories and files, such as .conda)
-# condaEnvironment <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/.conda/envs/KottonLab"
-condaEnvironment <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/.conda/envs/scTOP"
+condaEnvironment <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/.conda/envs/KottonLab"
+# condaEnvironment <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/.conda/envs/scTOP"
 ```
 
 ```{r Seurat to AnnData - Rds using filename, output file unspecified}
@@ -38,13 +38,11 @@ convertAnnDataToSeurat(input, output, condaEnvironment=condaEnvironment)
 ```
 
 ```{r CurrentUsage}
-andreaOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Andrea/objects/iLMSingle.h5ad"
-andreaInput <- "/restricted/projectnb/crem-bioinfo/project_workspace/23_09_11_andrea/calculations/analysis/C11andiLM/rds/sc.Rds"
-input2 <- "/restricted/projectnb/crem-bioinfo/project_workspace/23_09_11_andrea/calculations/analysis/combined_subset1_onlyC11andiLM/rds/sc.Rds"
-andrea <- readRDS(andreaInput)
-andrea2 <- readRDS(input2)
-# andreaOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Andrea/objects/Primary_3_14_24.h5ad"
-success <- convertSeuratToAnnData(seuratObj=andrea2, condaEnvironment=condaEnvironment, type="rds", outputFile=andreaOutput, assay="RNA")
+# lauren <- readRDS("/restricted/projectnb/crem-trainees/Kotton_Lab/Lauren/25_06_24_lauren_RDS/RNA_082825.rds")
+# laurenInput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Lauren/objects/Lauren_06_24_25.rds"
+# planerOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Lauren/objects/Planer.h5ad"
+planerOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/EpiPlaner.h5ad"
+success <- convertSeuratToAnnData(seuratObj=EpiPlaner, condaEnvironment=condaEnvironment, type="rds", assay="RNA", outputFile=planerOutput)
 
 ```
 

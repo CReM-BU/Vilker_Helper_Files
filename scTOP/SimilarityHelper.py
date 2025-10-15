@@ -1,6 +1,9 @@
 ### File containing functions for working with scTOP, made by Maria Yampolskaya and Pankaj Mehta
 # Author: Eitan Vilker
 
+import sys
+sys.path.append('/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Vilker_Helper_Files/scTOP')
+import TopObject
 import sctop as top
 import anndata as ad
 import numpy as np
@@ -178,9 +181,12 @@ def getTimeAveragedProjections(basis, df, cellLabels, times, timeSortFunc, subst
 
 # Get a dict of cell types in basis to the similarity scores of each type in the source. 
 # Format: Key (basis label) -> Key (source label) -> Value (projection score list for cells with source label onto the basis label)
-def getMatchingProjections(topObject, projections, basisKeep=None, sourceKeep=None, prefix=None, includeCriteria=None):
+def getMatchingProjections(topObject, projectionName, basisKeep=None, sourceKeep=None, includeCriteria=None, prefix=None):
 
     # If no specific columns provided, use all columns
+    projections = topObject.projections[projectionName]
+    if includeCriteria is not None:
+        projections = projections.loc[:, includeCriteria]
     if basisKeep is None:
         basisKeep = sorted(projections.index)
     if sourceKeep is None:
@@ -329,37 +335,41 @@ def plot_top(projections, tSNE_data, minimum_cells=50, ax=None, **kwargs):
 
 
 # Create scatter plot showing projection scores for two cell types, with the option to color according to marker gene
-def plotTwo(projections, annotations, celltype1, celltype2,
-             gene=None, plotMultiple=False, unsupervisedContour=False, supervisedContour=False, maxLabelCount=None,
-             geneExpressions=None, ax=None, figX=8, figY=8, includeCriteria=None,
-             hue=None, labels=None, palette=None, markers=True, markerSize=40, legendMarkerScale=2,
-             xBounds=None, yBounds=None, plotInRow=False, seed=0,
-             axisFontSize=15, legendFontSize=13, title="", outFile=None):
+def plotTwo(topObject, projectionName, celltype1, celltype2,
+               gene=None, plotMultiple=False, unsupervisedContour=False, supervisedContour=False, maxLabelCount=None, alternateColumn=None,
+               geneExpressions=None, ax=None, figX=8, figY=8, includeCriteria=None,
+               hue=None, labels=None, palette=None, markers=True, markerSize=40, legendMarkerScale=2,
+               xBounds=None, yBounds=None, plotInRow=False, seed=0,
+               axisFontSize=15, legendFontSize=13, title="", outFile=None, show=True):
 
-    # Filter annotations and/or projections if chosen
-    if includeCriteria is not None:
-        annotations = np.array(annotations)[includeCriteria]
-        projections = projections.loc[:, includeCriteria]
-        geneExpressions = geneExpressions.loc[:, includeCriteria] if gene else None
-
+    # Filter labeling columns
+    annotations = topObject.annotations if includeCriteria is None else topObject.annotations[includeCriteria]
+    projections = topObject.projections[projectionName] if includeCriteria is None else topObject.projections[projectionName].loc[:, includeCriteria]
+    geneExpressions = None if not gene else topObject.processedData if includeCriteria is None else topObject.processedData.loc[:, includeCriteria]
+    alternateColumnValues = None if not alternateColumn else topObject.metadata[alternateColumn] if includeCriteria is None else topObject.metadata[alternateColumn][includeCriteria]
+    
     # Undersample some cell types based on a count maximum
     if maxLabelCount is not None:
         rus = RandomUnderSampler(sampling_strategy=getLabelCountsMap(annotations, maxCount=maxLabelCount), random_state=seed)
         projectionsUntransposed, annotations = rus.fit_resample(projections.T, annotations)
         projections = projectionsUntransposed.T
 
-    labels = labels or [str(label) for label in set(annotations)]
-
-    # Set axes for current plot
+    # Set axes and key parameters for current plot
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(figX, figY))
-    x = projections.loc[celltype1]
-    y = projections.loc[celltype2]
+    x, y = (projections.loc[celltype1], projections.loc[celltype2])
+    labels = labels if labels is not None else [str(label) for label in set(annotations)]
 
+    # Create core plots
     if gene:  # If labeling by gene expression instead of source labels
-        ax = geneExpressionPlot(ax, x, y, gene, geneExpressions, annotations, palette, markerSize=markerSize, alpha=0.5, axisFontSize=axisFontSize, plotMultiple=plotMultiple)
+        ax = geneExpressionPlot(ax, x, y, gene, geneExpressions, annotations, palette, 
+                markerSize=markerSize, alpha=0.5, axisFontSize=axisFontSize, plotMultiple=plotMultiple)
+    elif alternateColumn:
+        ax = alternateColumnPlot(ax, x, y, alternateColumn, alternateColumnValues, annotations, palette, 
+                markerSize=markerSize, alpha=0.5, axisFontSize=axisFontSize, plotMultiple=plotMultiple)
     else:  # If labeling is by cell type
-        ax = sourceLabelPlot(ax, x, y, annotations, labels, palette=palette, markers=markers, markerSize=markerSize, legendMarkerScale=legendMarkerScale, axisFontSize=axisFontSize, legendFontSize=legendFontSize, plotMultiple=plotMultiple)
+        ax = sourceLabelPlot(ax, x, y, annotations, labels, 
+                palette=palette, markers=markers, markerSize=markerSize, legendMarkerScale=legendMarkerScale, axisFontSize=axisFontSize, legendFontSize=legendFontSize, plotMultiple=plotMultiple)
 
     # Add contours if desired
     ax = unsupervisedContourPlot(ax, x, y) if unsupervisedContour else ax
@@ -375,8 +385,8 @@ def plotTwo(projections, annotations, celltype1, celltype2,
         ax.set_xlim(xBounds[0], xBounds[1])
     if yBounds is not None:
         ax.set_ylim(yBounds[0], yBounds[1])
-    ax.set_xlabel(celltype1, fontsize=axisFontSize)
-    ax.set_ylabel(celltype2, fontsize=axisFontSize)
+    ax.set_xlabel(projectionName + " " + celltype1, fontsize=axisFontSize)
+    ax.set_ylabel(projectionName + " " + celltype2, fontsize=axisFontSize)
 
     # Set text for plot
     if title != "":
@@ -384,12 +394,13 @@ def plotTwo(projections, annotations, celltype1, celltype2,
 
     if plotMultiple:
         ax.set_aspect('equal')
-
     else:
         plt.tight_layout()
         if outFile is not None:
             plt.savefig(outFile, bbox_inches='tight')
-        # plt.show()
+        if show:
+            plt.show()
+    return ax
 
 
 # Craetes a Seaborn 2D scatter plot using projections onto basis columns as axes and gene expressions to identify points. Helper for plotTwo
@@ -417,6 +428,19 @@ def sourceLabelPlot(ax, x, y, annotations, labels=None, palette=None, markers=Tr
     return ax
 
 
+# Craetes a Seaborn 2D scatter plot using projections onto basis columns as axes and gene expressions to identify points. Helper for plotTwo
+def alternateColumnPlot(ax, x, y, alternateColumn, alternateColumnValues, annotations, palette, markerSize=40, alpha=0.5, plotMultiple=False, axisFontSize=15):
+    palette, scalarmap = createColorbar(alternateColumnValues) if palette is None else (palette, None)
+    plot = sns.scatterplot(x=x, y=y, hue=alternateColumnValues, palette=palette, alpha=alpha, 
+                           ax=ax, s=markerSize, style=annotations)
+    if not plotMultiple:
+        cbar = plt.colorbar(scalarmap, ax=ax) # scalarmap won't be defined unless palette wasn't, which is only in single plot
+        cbar.ax.tick_params(labelsize=axisFontSize // 1.3)
+        cbar.set_label('{}'.format(alternateColumn), size=axisFontSize, labelpad=20)
+
+    plot.legend_.remove()
+    return ax
+
 # Creates contour ellipses in unsupervised manner
 def unsupervisedContourPlot(ax, x, y, contourColor=sns.color_palette()[0]):
     sns.kdeplot(ax=ax, x=x, y=y, fill=True, color=contourColor, alpha=0.2)
@@ -438,17 +462,16 @@ def supervisedContourPlot(ax, x, y, annotations, labels, palette=None):
 
 
 # Plot multiple 2D similarity plots at once based on some field, such as time (Note: figure out difference if any between labels and annotations[toInclude])
-def plotTwoMultiple(topObject, projections, celltype1, celltype2,
+def plotTwoMultiple(topObject, projectionName, celltype1, celltype2,
                     annotations=None, subsetCategory=None, subsetNames=None, gene=None, includeCriteria=None,
-                    unsupervisedContour=False, supervisedContour=False, maxLabelCount=None, seed=None,
+                    unsupervisedContour=False, supervisedContour=False, maxLabelCount=None, alternateColumn=None, seed=None,
                     xBounds=None, yBounds=None, plotInRow=False, axisFontSize=24, legendFontSize=24,
                     legendMarkerScale=0.5, markerSize=40, titleFontSize=36, title="", caption=None, outFile=None):
 
-    # Initialize categories if left empty
-    annotations = annotations or topObject.annotations
-    annotations = annotations[includeCriteria] if includeCriteria is not None else annotations
-    subsetCategory = subsetCategory or topObject.metadata[topObject.timeColumn]
-    subsetNames = subsetNames or topObject.timesSorted
+    # Initialize categories
+    annotations = topObject.annotations if includeCriteria is None else topObject.annotations[includeCriteria]
+    subsetCategory = topObject.metadata[topObject.timeColumn] if subsetCategory is None else subsetCategory
+    subsetNames = topObject.timesSorted if subsetNames is None else subsetNames
 
     # Get subplots
     subsetCount = len(subsetNames)
@@ -464,7 +487,9 @@ def plotTwoMultiple(topObject, projections, celltype1, celltype2,
 
     if gene:
         geneExpressions = topObject.processedData
-        palette, scalarmap = createColorbar(geneExpressions.loc[gene])
+        palette, scalarmap = createColorbar(geneExpressions.loc[gene, includeCriteria])
+    elif alternateColumn:
+        palette, scalarmap = createColorbar(topObject.metadata[alternateColumn][includeCriteria])
     else:
         palette = setPalette(labels)
         legendItems = []
@@ -481,19 +506,17 @@ def plotTwoMultiple(topObject, projections, celltype1, celltype2,
             ax = fig.add_subplot(gs[i, j])
             if subsetIdx == subsetCount:
                 ax.axis("off")  # Hide this axis
-                if not gene:
+                if not (gene or alternateColumn):
                     ax.legend(handles=legendItems, title="Source Labels", title_fontsize=axisFontSize, fontsize=legendFontSize, markerscale=legendMarkerScale, loc='upper left', frameon=False)
                 break
 
             subset = subsetNames[subsetIdx]
             toInclude = np.logical_and(subsetCategory == subset, includeCriteria) if includeCriteria is not None else subsetCategory == subset
-            subsetGeneExpressions = geneExpressions.loc[:, toInclude] if gene else None
             ax = plotTwo(
-                projections.loc[:, toInclude], annotations[subsetCategory==subset], celltype1, celltype2,
-                ax=ax, labels=labels, gene=gene, geneExpressions=subsetGeneExpressions, unsupervisedContour=unsupervisedContour, supervisedContour=supervisedContour,
-                plotMultiple=True, plotInRow=plotInRow, maxLabelCount=maxLabelCount, xBounds=xBounds, yBounds=yBounds, seed=seed,
-                palette=palette, markers=labelMarkerMap, markerSize=markerSize, legendMarkerScale=legendMarkerScale, axisFontSize=axisFontSize, 
-                legendFontSize=legendFontSize
+                topObject, projectionName, celltype1, celltype2,
+                ax=ax, labels=labels, gene=gene, geneExpressions=geneExpressions if gene else None, alternateColumn=alternateColumn, unsupervisedContour=unsupervisedContour, supervisedContour=supervisedContour,
+                plotMultiple=True, plotInRow=plotInRow, maxLabelCount=maxLabelCount, xBounds=xBounds, yBounds=yBounds, seed=seed, includeCriteria=toInclude,
+                palette=palette, markers=labelMarkerMap, markerSize=markerSize, legendMarkerScale=legendMarkerScale, axisFontSize=axisFontSize, legendFontSize=legendFontSize
             )
             ax.set_xlabel(celltype1, fontsize=axisFontSize)
             ax.set_ylabel(celltype2, fontsize=axisFontSize)
@@ -506,6 +529,10 @@ def plotTwoMultiple(topObject, projections, celltype1, celltype2,
         cbar = fig.colorbar(scalarmap, label='{} expression'.format(gene), ax=ax)
         cbar.ax.tick_params(labelsize=legendFontSize // 1.3)
         cbar.set_label('{} expression'.format(gene), size=legendFontSize, labelpad=20)
+    elif alternateColumn:
+        cbar = fig.colorbar(scalarmap, label='{}'.format(alternateColumn), ax=ax)
+        cbar.ax.tick_params(labelsize=axisFontSize // 1.3)
+        cbar.set_label('{}'.format(alternateColumn), size=axisFontSize, labelpad=20)
 
     if caption:
         caption = (
@@ -659,7 +686,7 @@ def getLabelColorMap(annotations, includeOther=True):
 
 
 # Create a boxplot of the similarities between any number of sources and a basis
-def similarityBoxplot(similarityMap, sourceKeep=None, basisKeep=None, groupLengths=None, labelIdxStartMap=None, title="", titleFontSize=36, labelFontSize=18, showOutliers=True, figY=8, outFile=None):
+def similarityBoxplot(similarityMap, sourceKeep=None, basisKeep=None, groupLengths=None, labelIdxStartMap=None, title="", titleFontSize=36, labelFontSize=18, xLabelRotation=90, showOutliers=True, figY=8, outFile=None):
     # If no specific columns provided, use all columns of similarity map
     basisKeep = basisKeep or sorted(similarityMap.keys())
     sourceKeep = sourceKeep or sorted(set(list(similarityMap.values())[0]))
@@ -725,7 +752,7 @@ def similarityBoxplot(similarityMap, sourceKeep=None, basisKeep=None, groupLengt
         ax.vlines(x=group_border, ymin=y_min, ymax=y_max,
                   color='black', linestyle='solid', linewidth=1)
 
-    ax.set_xticklabels(individualLabels, fontsize=labelFontSize, rotation=45)
+    ax.set_xticklabels(individualLabels, fontsize=labelFontSize, rotation=xLabelRotation)
     ax.tick_params(labelsize=labelFontSize * 0.7)
     ax.set_xlabel("Source Labels", weight="bold", fontsize=labelFontSize)
     ax.set_ylabel("Similarity Scores", weight="bold", fontsize=labelFontSize)
@@ -806,18 +833,23 @@ def getTestAccuracies(topObject):
 
 
 # Volcano plot of most significant genes to scTOP predictions for a cell type
-def plotPredictivity(ax, topObject, label, basis=None, showHigh=10, title=""):
+def plotPredictivity(topObject, label, basis=None, showHigh=10, sourceLabel=None, figX=8, figY=8, title="", outFile=None):
+    fig, ax = plt.subplots(1, 1, figsize=(figX, figY))
+    
     predictivity = topObject.getBasisPredictivity(specificBasis=basis) if basis is not None else topObject.predictivity
     genes = topObject.predictivity.loc[label]
     # genesWithZeroes = topObject.processedData.loc[:, topObject.annotations == label].reindex(genes.index, fill_value=0) # Fill missing genes
     genesWithZeroes = topObject.processedData.reindex(genes.index, fill_value=0) # Fill missing genes
+    if sourceLabel is not None:
+        genesWithZeroes = genesWithZeroes.loc[:, topObject.annotations == sourceLabel]
     averageExpressions = genesWithZeroes.loc[genes.index].T.mean()
     ax.scatter(averageExpressions, genes, color='gray', alpha=0.6, label='All Genes', s=3)
 
-    # Sort expected_genes to get the top 10 values
-    if type(showHigh) is int and showHigh > 0:
-        scoreContributions = topObject.scoreContributions if hasattr(topObject, "scoreContributions") else topObject.getScoreContributions()
-        highContributions = topObject.scoreContributions[label].mean(axis=1).sort_values(ascending=False).head(showHigh).index
+    # Sort expected_genes to get the top values
+    if type(showHigh) is int and showHigh > 0: 
+        subsetCategory, subsetName = (topObject.annotations, sourceLabel) if sourceLabel is not None else (None, None)
+        scoreContributions = topObject.scoreContributions if hasattr(topObject, "scoreContributions") and sourceLabel is None and basis is None else topObject.getScoreContributions(specificBasis=basis, subsetCategory=subsetCategory, subsetName=subsetName)
+        highContributions = scoreContributions[label].mean(axis=1).sort_values(ascending=False).head(showHigh).index
         xHigh = averageExpressions[highContributions]
         yHigh = genes.get(highContributions).values
         ax.scatter(xHigh, yHigh, color='blue', label='Top ' + str(showHigh) + ' Genes', s=3)
@@ -832,3 +864,6 @@ def plotPredictivity(ax, topObject, label, basis=None, showHigh=10, title=""):
     ax.set_title(title, fontsize=18)
     ax.legend(fontsize=14)
     ax.grid(True)
+    if outFile is not None:
+        plt.savefig(outFile)
+    plt.show()

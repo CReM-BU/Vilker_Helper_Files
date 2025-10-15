@@ -6,6 +6,8 @@ import pandas as pd
 import sctop as top
 import scanpy as sc
 import anndata as ad
+from sklearn.decomposition import PCA
+import scipy.stats as sps
 from tqdm import tqdm
 import inspect
 from copy import deepcopy
@@ -17,6 +19,7 @@ class TopObject:
     def __init__(self, name, manualInit=False, useAverage=False, skipProcess=False, keep=None, exclude=None, dataset="/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Vilker_Helper_Files/scTOP/DatasetInformation.csv"):
         self.name = name
         self.dataset = dataset
+        self.processedData = None
         if self.dataset is not None:
             datasetInfo = pd.read_csv(self.dataset, index_col="Name", keep_default_na=False).loc[self.name, :]
             self.cellTypeColumn, self.toKeep, self.toExclude, self.filePath, self.timeColumn, self.duplicates, self.raw, self.layer = datasetInfo
@@ -29,6 +32,8 @@ class TopObject:
 
         self.projections = {}
         self.basis = None
+        self.PCAs = {}
+        self.PCABases = {}
 
     # Summary of parameters upon printing object
     def __str__(self):
@@ -94,7 +99,7 @@ class TopObject:
         keepTruthValue = getTruthValue(keep)
         excludeTruthValue = getTruthValue(exclude)
 
-        if keepTruthValue or excludeTruthValue or condition is not None:
+        if keepTruthValue or excludeTruthValue or condition is not None or len(conditionList) > 0:
             print("Filtering TopObject...")
             conditionMap = {}
 
@@ -122,7 +127,10 @@ class TopObject:
             if not initializing:
                 self.setDF()
                 if not skipProcess:
-                    self.processDataset(useAverage=useAverage)
+                    self.processedData = self.processDataset(useAverage=useAverage)
+                elif self.processedData is not None:
+                    self.processedData = self.processedData.loc[:, self.processedData.columns.isin(self.df.columns)]
+                    
             print("Finished filtering!")
 
     # Set key features. May need to be called whenever object is edited
@@ -153,51 +161,75 @@ class TopObject:
     # First scTOP function, ranks and normalizes source 
     def processDataset(self, useAverage=False):
         print("Processing scTOP data...")
-        self.processedData = top.process(self.df, average=useAverage)
+        # self.processedData = top.process(self.df, average=useAverage)
+        self.processedData = process_updated(self.df, average=useAverage)
         return self.processedData
         print("Finished processing!")
 
     # Main scTOP function, computing similarity between labels in sources and basis
-    def projectOntoBasis(self, basis, projectionName):
+    def projectOntoBasis(self, basis, projectionName, pca=None):
         print("Projecting onto basis...")
-        projection = top.score(basis, self.processedData)
+        if self.processedData is None:
+            self.processDataset()
+        if pca is not None:
+            processedData = self.processedData.loc[pca.feature_names_in_, :].T
+            processedPCA = pd.DataFrame(pca.transform(processedData), index=processedData.index)
+            projection = top.score(basis, processedPCA.T)
+            overlap = "N/A"
+        else:
+            projection = top.score(basis, self.processedData)
+            overlap = np.intersect1d(basis.index, self.processedData.index)
+
         self.projections[projectionName] = projection
-        overlap = np.intersect1d(basis.index, self.processedData.index)
         print("Finished projecting! " + str(len(overlap)) + " genes were in both the source and basis.")
         return projection
 
     # Using any dataset with well-defined clusters, set it as a basis
-    def setBasis(self, holdouts=None, threshold=200, seed=None, getScores=False):
+    def setBasis(self, holdouts=None, threshold=200, seed=None, getScores=False, usePCA=False, allowedGenes=None, basisName=None):
         print("Setting basis...")
         # Count the number of cells per type
         typeCounts = self.annotations.value_counts()
 
         # Using fewer than 150-200 cells leads to nonsensical results, due to noise. More cells -> less sampling error
-        types_above_threshold = typeCounts[typeCounts > threshold].index
+        typesAboveThreshold = typeCounts[typeCounts > threshold].index
         basisList = []
         trainingIDs = []
+        processedData = self.processDataset() if self.processedData is None and usePCA else None # Process dataset if not done yet and needed for PCA
+        cellData = self.processedData if usePCA else self.df
+        cellData = cellData.loc[cellData.index.isin(allowedGenes), :] if allowedGenes is not None else cellData
+
+        if usePCA:
+            print("Performing PCA...")
+            if basisName is None:
+                print("Must input a basis name!")
+                return None
+            self.PCAs[basisName] = PCA(100)
+            cellData = pd.DataFrame(self.PCAs[basisName].fit_transform(cellData.T), index=cellData.columns).T
+
         rng = np.random.default_rng(seed=seed)
-        for cell_type in tqdm(types_above_threshold):
-            cell_IDs = self.metadata[self.annotations == cell_type].index
+        for cellType in tqdm(typesAboveThreshold):
+            cellIDs = self.metadata[self.annotations == cellType].index
             if holdouts is not None:
                 holdouts = 0.2 if type(holdouts) is bool else holdouts
-                current_IDs = rng.choice(cell_IDs, size=int(len(cell_IDs) * (1 - holdouts)), replace=False)
+                currentIDs = rng.choice(cellIDs, size=int(len(cellIDs) * (1 - holdouts)), replace=False)
             else:
-                current_IDs = cell_IDs
-            cell_data = self.df[current_IDs]
-            trainingIDs += [current_IDs] # Keep track of training_IDs so that you can exclude them if you want to test the accuracy
+                currentIDs = cellIDs
+            currentCellData = cellData[currentIDs]
+            trainingIDs += [currentIDs] # Keep track of training_IDs so that you can exclude them if you want to test the accuracy
 
             # Average across the cells and process them using the scTOP processing method
-            processed = top.process(cell_data, average=True)
+            processed = top.process(currentCellData, average=True) if not usePCA else currentCellData.mean(axis=1)
             basisList += [processed]
 
         trainingIDs = np.concatenate(trainingIDs)
         basis = pd.concat(basisList, axis=1)
-        basis.columns = types_above_threshold
+        basis.columns = typesAboveThreshold
         basis.index.name = "gene"
         print("Basis set!")
         if holdouts is not None and holdouts:
             return basis, trainingIDs
+        if usePCA:
+            self.PCABases[basisName] = basis
         self.basis = basis
         self.getBasisCorrelations()
         self.getBasisPredictivity()
@@ -296,13 +328,14 @@ class TopObject:
     def getBasisCorrelations(self, specificBasis=None):
         basis = self.basis if specificBasis is None else specificBasis
         corr = basis.T.dot(basis) / basis.shape[0]
-        self.corr = corr if specificBasis is None else self.corr
+        if specificBasis is None:
+            self.corr = corr 
         return corr
 
     # Create predictivity matrix to assess impact of cell type on gene expression
     def getBasisPredictivity(self, specificBasis=None):
         basis = self.basis if specificBasis is None else specificBasis
-        corr = self.corr if specificBasis is None and self.corr is not None else self.getBasisCorrelations(specificBasis=specificBasis)
+        corr = self.corr if specificBasis is None else self.getBasisCorrelations(specificBasis=basis)
         eta = np.linalg.inv(corr).dot(basis.T) / basis.shape[0]
         self.predictivity = pd.DataFrame(eta, index=basis.columns, columns=basis.index)
         return self.predictivity
@@ -310,36 +343,96 @@ class TopObject:
     # Create score contribution matrix displaying product of predictivity and normalized expression
     def getScoreContributions(self, specificBasis=None, subsetCategory=None, subsetName=None):
         scoreContributions = {}
+        labelExpression = self.processedData if hasattr(self, "processedData") else self.processDataset()
         if subsetCategory is not None and subsetName is not None:
-            labelExpression = top.process(self.df.loc[:, subsetCategory == subsetName])
-        else:
-            labelExpression = self.processedData if hasattr(self, "processedData") else self.processDataset()
-
+            labelExpression = labelExpression.loc[:, subsetCategory == subsetName]
         predictivityMatrix = self.predictivity if specificBasis is None else self.getBasisPredictivity(specificBasis=specificBasis)
         for label in predictivityMatrix.index:
             scoreContributions[label] = {}
             commonGenes = np.intersect1d(labelExpression.index, predictivityMatrix.columns)
             scoreContributions[label] = labelExpression.loc[commonGenes].multiply(predictivityMatrix.loc[label, commonGenes], axis=0)
 
-        self.scoreContributions = scoreContributions
+        if subsetName is None:
+            self.scoreContributions = scoreContributions
         return scoreContributions
 
     # Given a projection and a cell type in the basis, change annotation in source to reflect top labels of that cell type
-    def newCellTypeCatFromProjection(self, projection, target, newCategoryName, newLabelName=None, specificationValue=0.1):
+    def newCellTypeCatFromProjection(self, projectionName, target, newCategoryName, newLabelName=None, specificationValue=0.1, target2=None):
         newLabelName = newLabelName or target
+        projection = self.projections[projectionName]
         targetCells = []
         for sample in self.df.columns:
-            if projection.loc[:, sample].idxmax() == target and projection.loc[target, sample] > specificationValue:
+            condition = projection.loc[:, sample].idxmax() == target and projection.loc[target, sample] > specificationValue
+            condition = condition if target2 is None else condition and projection.loc[target2, sample] > specificationValue
+            if condition:
                 targetCells.append(sample)
-        self.metadata[newCategoryName] = self.annotations
-        self.metadata[newCategoryName] = self.metadata[newCategoryName].cat.add_categories([newLabelName])
+            
+        self.anndata.obs[newCategoryName] = self.anndata.obs[newCategoryName].cat.add_categories([newLabelName])
+        self.anndata.obs[newCategoryName] = self.annotations
 
         for sample in targetCells:
-            self.metadata.loc[sample, newCategoryName] = newLabelName
+            self.anndata.obs.loc[sample, newCategoryName] = newLabelName
 
         self.cellTypeColumn = newCategoryName
+        self.metadata = self.anndata.obs
         self.annotations = self.metadata[self.cellTypeColumn]
-        return self.annotations
+
+
+def rank_zscore_updated(data):
+    """
+    Return the normally-distributed z-scores of the given data using a fast,
+    vectorized approach.
+    Parameters
+    ----------
+    data : (G, S) array or sparse matrix
+        Array with G genes and S independent samples.
+    Returns
+    -------
+    out : (G, S) array
+        Array containing ranked then z-scored data.
+    """
+    # 2. Handle 1D input
+    if data.ndim == 1:
+        data = data.reshape(-1, 1)
+    G, S = data.shape
+    rank_data = sps.rankdata(data, axis=0)
+    output_data = sps.norm.ppf(rank_data / (G + 1))
+    return output_data
+
+
+def process_updated(data, average=False):
+    """
+    Return the processed scRNA-seq data. Each sample is independently normalized, then the fitted z-score
+    is calculated. Optionally, an average is taken across samples before z-scoring.
+    
+    Parameters
+    ----------
+    data : (G, S) DataFrame
+        Table with ``G`` genes and ``S`` independent samples containing raw counts from scRNA-seq.
+    average : bool, optional
+        if True: take the average across samples after normalizing and before z-scoring
+        
+    Returns
+    -------
+    out : (G, S) DataFrame (or (G, 1) if ``average``)
+        Table with ``G`` genes and ``S`` independent samples containing processed scRNA-seq data.
+    
+    """
+    
+    # Normalize each sample independently
+    data_normalized = data/np.sum(data,axis=0)
+    
+    # Average across samples, if requested
+    if average:
+        data_normalized = data_normalized.mean(axis=1)
+    
+    # Find the normal-distribution z-scores of log(expression + 1)
+    data_zscored = rank_zscore_updated(np.log2(data_normalized.values + 1))
+    
+    if average:
+        return pd.DataFrame(data_zscored, index=data.index)
+    else:
+        return pd.DataFrame(data_zscored, index=data.index, columns=data.columns)
 
 
 # Add or update an entry to a summary file containing metadata regarding datasets
@@ -361,6 +454,7 @@ def addDataset(summaryFile, name, filePath=None, cellTypeColumn=None, toKeep=Non
     else:
         newEntry.columns = summaryFileInfo.columns
         summaryFileInfo = pd.concat([summaryFileInfo, newEntry], ignore_index=False)
+    print("Writing updated file...")
     summaryFileInfo.to_csv(summaryFile, index_label="Name")
     return summaryFileInfo
 
@@ -383,13 +477,13 @@ def dynamicAddDataset(summaryFile=None):
         cellTypeColumn = processInput("Assign cellTypeColumn. Enter the title of the column containing cell type annotations:")
         toKeep = processInput("Assign toKeep. Press Y to enter a list of cell types that you may filter to later or press Enter to skip:", followUpMessage="Enter a cell type to include in filtering or press Enter to continue", isList=True)
         toExclude = processInput("Assign toExclude. Press Y to enter a list of cell types that you may filter out later or press Enter to skip:", followUpMessage="Enter a cell type to exclude in filtering or press Enter to continue", isList=True)
-        timeColumn = processInput("Assign timeColumn, Enter the title of the column containing times samples were collected or press Enter to skip:")
+        timeColumn = processInput("Assign timeColumn. Enter the title of the column containing times samples were collected or press Enter to skip:")
         duplicates = processInput("Assign duplicates. Enter Y if the dataset has duplicate genes; otherwise enter N or press Enter to skip:", isBool=True)
         raw = processInput("Assign raw. Enter Y if using the raw values stored in the anndata object instead; otherwise enter N or press Enter to skip:", isBool=True)
         layer = processInput("Assign layer. Enter the name of a specific layer (typically counts, data, or scaled_data) to use or press Enter to skip:")
         addDataset(summaryFile, name, filePath=filePath, cellTypeColumn=cellTypeColumn, toKeep=toKeep, toExclude=toExclude, timeColumn=timeColumn, duplicates=duplicates, raw=raw, layer=layer)
     except:
-        print("Quit successfully!")
+        print("Quit early!")
 
 
 # Checks user input and processes based on type
