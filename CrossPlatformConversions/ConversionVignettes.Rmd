@@ -2,12 +2,13 @@
 ```{r Libraries}
 library(Seurat)
 source("seuratAnnDataConversions.R")
+library(sceasy)
 ```
 
 ```{r Set Conda Environment}
 # Choose conda environment if desired (use ls -a in bash to see hidden directories and files, such as .conda)
-condaEnvironment <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/.conda/envs/KottonLab"
-# condaEnvironment <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/.conda/envs/scTOP"
+# condaEnvironment <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/.conda/envs/KottonLab"
+condaEnvironment <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/.conda/envs/scTOP"
 ```
 
 ```{r Seurat to AnnData - Rds using filename, output file unspecified}
@@ -38,11 +39,10 @@ convertAnnDataToSeurat(input, output, condaEnvironment=condaEnvironment)
 ```
 
 ```{r CurrentUsage}
-# lauren <- readRDS("/restricted/projectnb/crem-trainees/Kotton_Lab/Lauren/25_06_24_lauren_RDS/RNA_082825.rds")
-# laurenInput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Lauren/objects/Lauren_06_24_25.rds"
-# planerOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Lauren/objects/Planer.h5ad"
-planerOutput <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/EpiPlaner.h5ad"
-success <- convertSeuratToAnnData(seuratObj=EpiPlaner, condaEnvironment=condaEnvironment, type="rds", assay="RNA", outputFile=planerOutput)
+# input <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/Seurat/McCall.rds"
+output <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/McCallReannotated.h5ad"
+success <- convertSeuratToAnnData(seuratObj=McCallReannotated, condaEnvironment=condaEnvironment, type="rds", assay="RNA", inputFile=NULL, outputFile=output)
 
+# convertAnnDataToSeurat(input, output, condaEnvironment=condaEnvironment)
 ```
 

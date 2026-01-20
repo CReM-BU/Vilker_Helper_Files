@@ -2,14 +2,9 @@ library(Seurat)
 library(reticulate)
 library(sceasy)
 library(SingleCellExperiment)
-# if (!requireNamespace("remotes", quietly = TRUE)) {
-#   install.packages("remotes")
-# }
-# remotes::install_github("mojaveazure/seurat-disk")
 library(SeuratDisk)
 # library(future)
 # options(future.globals.maxSize = 120000 * 1024^2)
-
 
 ### Note: The functions in this file require AnnData through a Python environment. Conda recommended
 
@@ -18,22 +13,24 @@ convertRdsSeuratToAnnData <- function(conversionInput, mainLayer=NULL, transferL
   if (is.null(transferLayers)){ transferLayers <- c("data", "counts", "scale.data") }
   if (is.null(mainLayer)){ mainLayer <- "counts" }
   obj <- conversionInput$obj
-  
   # Because sceasy doesn't support v5, convert to v3
   if (substr(Version(obj), 1, 1) == "5"){ 
+    print("Converting to v3...")
     if (mainLayer != "data") { dataLayer <- NULL} else {dataLayer <- obj[[assay]]$data}
-    obj[[mainLayer]] <- CreateAssayObject(
-      counts = obj[[assay]]$counts,
+    obj[[assay]] <- CreateAssayObject(
+      counts = obj[[assay]]$counts, # Main layers seems to need to be explicitly set
       # data = dataLayer
     )
   }
-  # sceasy::convertFormat(obj, from="seurat", to="anndata", outFile=paste0(conversionInput$outFile, ".h5ad"), 
-                        # main_layer=mainLayer, transfer_layers=transferLayers, assay=assay)
+  print("Converting to h5ad...")
+  sceasy::convertFormat(obj, from="seurat", to="anndata", outFile=paste0(conversionInput$outFile, ".h5ad"),
+    main_layer=mainLayer, transfer_layers=transferLayers, assay=assay)
   return(1)
 }
 
 # Function to convert an Robj format Seurat object to AnnData. May need adjusting if there are complications with data vs scaled data, as SeuratDisk's convert function doesn't account for layers
-convertRobjSeuratToAnnData <- function(conversionInput, outFile, assay="RNA"){  
+convertRobjSeuratToAnnData <- function(conversionInput, outFile, assay="RNA"){
+  print("Converting to h5seurat intermediate file...")
   intermediateFile <- paste0(conversionInput$outFile, ".h5seurat")
   SaveH5Seurat(conversionInput$obj, filename=intermediateFile, overwrite = TRUE)
   return(convertH5seuratSeuratToAnnData(intermediateFile, assay=assay))
@@ -54,10 +51,19 @@ getSeuratInputIfValid <- function(type, inputFile=NULL, outputFile=NULL, seuratO
     }
     return(list(inFile=inputFile))
   }
-        
-  else if (type == "Rds" || type == "Robj"){
-    if (!is.null(inputFile)){ 
-      seuratObj <- readRDS(inputFile) # Load Seurat object if file specified
+  
+  # Try 2 different ways of reading the object, as it depends on how object was saved
+  else if (type == "rds" || type == "Robj"){
+    if (!is.null(inputFile)){
+      seuratObj <- tryCatch({
+          readRDS(inputFile)
+        }, 
+        error = function(e) {
+          print("Reading using load function...")
+          load(inputFile)
+        }
+      )
+      
       if (is.null(outputFile)) { outputFile <- inputFile }
     }
     else if (is.null(seuratObj) || is.null(outputFile)){ 
@@ -65,7 +71,6 @@ getSeuratInputIfValid <- function(type, inputFile=NULL, outputFile=NULL, seuratO
       return(NULL)
     }
     if (type == "Robj"){ seuratObj <- UpdateSeuratObject(seuratObj) }   # Get h5 version of Seurat object
-
     return(list(obj=seuratObj, outFile=getFilenameWithoutExtension(outputFile)))
   }
 }
@@ -79,6 +84,7 @@ getFilenameWithoutExtension <- function(filename){
 }
 
 # Main function to call the appropriate conversion function given the type of input format. 
+# You may need to set an environment variable, RETICULATE_CONDA, to your conda binary, possibly "/share/pkg.8/miniconda/25.3.1/install/bin/conda"
 ## condaEnvironment: Set if you don't have a Python environment set up with AnnData or are struggling, or if you just have a conda environment with all the functions you want
 ## type: the file format, of which the options are Rds (case insensitive), h5seurat, and Robj
 ## inputFile: location of the Seurat object. Not needed if an object is provided, except for h5seurat, where the path must be used
@@ -91,12 +97,12 @@ getFilenameWithoutExtension <- function(filename){
 convertSeuratToAnnData <- function(condaEnvironment=NULL, type="Rds", inputFile=NULL, outputFile=NULL, seuratObj=NULL, mainLayer=NULL, transferLayers=NULL, assay="RNA"){
 
   # Initialize parameters
-  if (type == "rds"){ type <- "Rds" }
-  if (!is.null(condaEnvironment)){ reticulate::use_condaenv(condaenv=condaEnvironment, required = TRUE) }
+  if (toupper(type) == "RDS"){ type <- "rds" }
+  if (!is.null(condaEnvironment)){ reticulate::use_condaenv(condaenv=condaEnvironment, required=TRUE) }
   conversionInput <- getSeuratInputIfValid(type, inputFile=inputFile, outputFile=outputFile, seuratObj=seuratObj)
   if (is.null(conversionInput)){ return(0) }
     
-  if (type == "Rds"){ success <- convertRdsSeuratToAnnData(conversionInput, mainLayer=mainLayer, transferLayers=transferLayers, assay=assay) }
+  if (type == "rds"){ success <- convertRdsSeuratToAnnData(conversionInput, mainLayer=mainLayer, transferLayers=transferLayers, assay=assay) }
   else if (type == "h5seurat"){ success <- convertH5seuratSeuratToAnnData(conversionInput, assay=assay) }
   else if (type == "Robj"){ success <- convertRobjSeuratToAnnData(conversionInput, assay=assay) }
   return(success)
