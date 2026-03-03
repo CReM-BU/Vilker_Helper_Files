@@ -10,6 +10,7 @@ import scanpy as sc
 import anndata as ad
 from pybiomart import Server
 import mygene
+from scipy.sparse import csr_matrix
 from sklearn.decomposition import PCA
 from sklearn.feature_selection import SelectKBest, f_classif
 from sklearn.ensemble import RandomForestClassifier
@@ -21,14 +22,13 @@ from imblearn.under_sampling import RandomUnderSampler
 from tqdm import tqdm
 import inspect
 from copy import deepcopy
-import os
 
 
 class TopObject:
-    def __init__(self, name, manualInit=False, useAverage=False, skipProcess=False, keep=None, exclude=None, dataset="/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Vilker_Helper_Files/scTOP/DatasetInformation.csv"):
+    def __init__(self, name, manualInit=False, useAverage=False, skipProcess=False, keep=None, exclude=None, maxSamples=None, dataset="/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Vilker_Helper_Files/scTOP/DatasetInformation.csv"):
         self.name = name
         self.dataset = dataset
-        self.processedData = None
+        self.processed = None
         if self.dataset is not None:
             datasetInfo = pd.read_csv(self.dataset, index_col="Name", keep_default_na=False).loc[self.name, :]
             self.cellTypeColumn, self.toKeep, self.toExclude, self.filePath, self.timeColumn, self.species, self.duplicates, self.raw, self.layer, self.comments = datasetInfo
@@ -37,7 +37,7 @@ class TopObject:
             self.toKeep = self.toKeep[1:-1].replace("'", "").split(", ") if type(self.toKeep) is str and len(self.toKeep) > 0 else self.toKeep
             self.toExclude = self.toExclude[1:-1].replace("'", "").split(", ") if type(self.toExclude) is str and len(self.toExclude) > 0 else self.toExclude
             if not manualInit:  # In case you want to adjust any of the parameters first
-                self.setup(useAverage=useAverage, skipProcess=skipProcess, keep=keep, exclude=exclude)
+                self.setup(useAverage=useAverage, skipProcess=skipProcess, keep=keep, exclude=exclude, maxSamples=maxSamples)
 
         self.projections = {}
         self.basis = None
@@ -82,25 +82,33 @@ class TopObject:
     def copy(self):
         print("Copying...")
         copy = deepcopy(self)
-        copy.setAnndata(self.anndata.copy())
+        copy.setAnndata(self.anndata.copy(), df=self.df.copy())
         print("Done!")
         return copy
 
     # Initialize AnnData object, metadata, df, and process it
-    def setup(self, useAverage=False, skipProcess=False, keep=False, exclude=False):
+    def setup(self, useAverage=False, skipProcess=False, keep=False, exclude=False, maxSamples=None):
 
         # Load AnnData (h5ad) object
         if not hasattr(self, "anndata"):
             print("Setting AnnData object...")
             annObject = sc.read_h5ad(self.filePath)
 
+            if self.raw and self.raw != "Other":  # Check to use raw data
+                annObject = ad.AnnData(X=annObject.raw.X, obs=annObject.obs, var=annObject.raw.var, uns=annObject.uns)
+
             if self.duplicates and self.duplicates != "Other":
                 print("Making variable names unique...")
                 annObject.var_names_make_unique()
         
         # Set and do basic filtering for AnnData object and associated metadata, df
-        self.setAnndata(annObject)
-        self.filter(keep=keep, exclude=exclude)
+        self.setAnndata(annObject, keep=keep, exclude=exclude, maxSamples=maxSamples)
+
+        # Check if there are duplicate genes and consolidate by measure such as mean
+        if self.duplicates and self.duplicates != "Other":
+            print("Consolidating duplicates...")
+            self.df = self.df.drop_duplicates().groupby(level=0).mean()
+            self.anndata = ad.AnnData(X=csr_matrix(self.df.T), obs=self.metadata, var=pd.DataFrame(self.df.index, index=self.df.index), uns=self.anndata.uns)
 
         # Process (2-step normalize) data if desired, preserving rest of object if this fails due to memory limits
         if not skipProcess:
@@ -124,36 +132,30 @@ class TopObject:
 
     # Set df, with a few extra options in case there are issues with the df
     def setDF(self, layer=None):
-        if self.raw and self.raw != "Other":  # Check to use raw data
-            print("Using raw data...")
-            self.df = pd.DataFrame(self.anndata.raw.X.toarray(), index=self.metadata.index, columns=self.anndata.raw.var_names).T
-
-        else:
-            layer = self.layer if getTruthValue(layer) != "Other" and getTruthValue(self.layer) == "Other" else None  # Check to use layer other than default
-            self.df = self.anndata.to_df(layer=layer).T # Create the DataFrame from the counts of the AnnData object
-
-        if self.duplicates and self.duplicates != "Other":  # Check if there are duplicate genes requiring consolidating by measure such as mean
-            self.df = self.df.drop_duplicates().groupby(level=0).mean()
+        layer = self.layer if getTruthValue(layer) != "Other" and getTruthValue(self.layer) == "Other" else None  # Check to use layer other than default
+        self.df = self.anndata.to_df(layer=layer).T # Create the DataFrame from the counts of the AnnData object
+        return self.df
 
     # Set anndata object along with associated objects
-    def setAnndata(self, annObject, skipProcess=True):
+    def setAnndata(self, annObject, skipProcess=True, keep=None, exclude=None, maxSamples=None, df=None):
         print("Setting AnnData...")
         self.anndata = annObject
         print("Setting metadata and df...")
         self.setMetadata()
-        try:
-            self.setDF()
-        except:
-            print("Unable to allocate sufficient memory for df!")
-            return
+        if not self.filter(keep=keep, exclude=exclude, maxSamples=maxSamples):
+            try:
+                self.df = self.setDF() if df is None else df
+            except:
+                print("Unable to allocate sufficient memory for df!")
+                return
         if not skipProcess:
             self.process()
-        elif self.processedData is not None:
-            self.processedData = self.processedData.loc[:, self.processedData.columns.isin(self.df.columns)]
-            self.processedData /= np.linalg.norm(self.processedData, axis=0, keepdims=True)
+        elif self.processed is not None and len(self.processed.index) >= len(self.df.index):
+            self.processed = self.processed.loc[self.processed.index.isin(self.df.index), self.processed.columns.isin(self.df.columns)]
+            self.processed.index = self.df.index
 
-    # Set TopObject to include or exclude cells with certain labels. Not for gene filtering!
-    def filter(self, keep=None, exclude=None, condition=None, maxSamples=None, conditionList=None, # Sample conditions
+    # Set TopObject to include or exclude cells with certain labels. Not for gene filtering! Return True if filtering occurred
+    def filter(self, keep=None, exclude=None, condition=None, maxSamples=None, conditionList=None,
                skipProcess=True, useAverage=False, seed=1):
 
         # Begin filtering if at least one condition was selected
@@ -181,47 +183,48 @@ class TopObject:
             # Undersample some cell types based on a count maximum. Must be performed after other conditions
             if maxSamples is not None:
                 rus = RandomUnderSampler(sampling_strategy=getLabelCountsMap(self.annotations, maxCount=maxSamples), random_state=seed)
-                df, annotations = rus.fit_resample(self.df.T, self.annotations)
-                self.setAnndata(self.anndata[self.df.columns.isin(df.index)])
+                samples, anno = rus.fit_resample(np.array(self.metadata.index).reshape(-1, 1), self.annotations)
+                self.setAnndata(self.anndata[[sample[0] for sample in samples]])
 
             # Process data as needed
             if not skipProcess:
                 self.process()
-            elif self.processedData is not None:
-                self.processedData = self.processedData.loc[:, self.processedData.columns.isin(self.df.columns)]
-            del conditionList
+            elif self.processed is not None:
+                self.processed = self.processed.loc[:, self.processed.columns.isin(self.df.columns)]
             print("Finished filtering!")
+            return True
+        return False
 
     # First scTOP function, ranks and normalizes source 
     def process(self, useAverage=False, chunks=500):
         print("Processing scTOP data...")
-        self.processedData = top.process(self.df, average=useAverage, chunk_size=chunks)
-        return self.processedData
-        print("Finished processing!")
+        self.processed = top.process(self.df, average=useAverage, chunk_size=chunks)
+        print("Done processing!")
+        return self.processed
 
     # Main scTOP function, computing similarity between labels in sources and basis
     def project(self, basis, projectionName, pca=None, alignGenes=False, normalize=False, returnOverlap=False):
         print("Projecting onto basis...")
         if alignGenes:
             self.setAnndata(self.anndata[:, self.df.index.isin(basis.index)])
-        if self.processedData is None or alignGenes:
+        if self.processed is None or alignGenes:
             self.process()
         if pca is not None:
-            processedData = self.processedData.loc[pca.feature_names_in_, :].T
-            processedPCA = pd.DataFrame(pca.transform(processedData), index=processedData.index)
+            processed = self.processed.loc[pca.feature_names_in_, :].T
+            processedPCA = pd.DataFrame(pca.transform(processed), index=processed.index)
             projection = top.score(basis, processedPCA.T)
             overlap = "N/A"
         else:
-            overlap = np.intersect1d(basis.index, self.processedData.index)
+            overlap = np.intersect1d(basis.index, self.processed.index)
             if normalize:
-                processedAligned = self.processedData.loc[overlap, :]
+                processedAligned = self.processed.loc[overlap, :]
                 basisAligned = basis.loc[overlap, :]
                 processedAligned /= np.linalg.norm(processedAligned, axis=0, keepdims=True)
                 basisAligned /= np.linalg.norm(basisAligned, axis=0, keepdims=True)
                 # processedAligned = top.process(processedAligned, average=False, chunk_size=500)
                 projection = top.score(basisAligned, processedAligned)
             else:
-                projection = top.score(basis, self.processedData)
+                projection = top.score(basis, self.processed)
 
         self.projections[projectionName] = projection
         print("Finished projecting! " + str(len(overlap)) + " genes were in both the source and basis.")
@@ -234,8 +237,8 @@ class TopObject:
         print("Setting basis...")
 
         # Set and filter data that will form basis
-        processedData = self.process() if self.processedData is None and usePCA else None # Process dataset if not done yet and needed for PCA
-        cellData = self.processedData if usePCA or useProcessed else self.df
+        processed = self.process() if self.processed is None and usePCA else None # Process dataset if not done yet and needed for PCA
+        cellData = self.processed if usePCA or useProcessed else self.df
         cellData = cellData.loc[cellData.index.isin(allowedGenes), :] if allowedGenes is not None else cellData
         cellData = cellData.loc[:, includeCriteria] if includeCriteria is not None else cellData
         annotations = self.annotations[self.df.columns.isin(cellData.columns)]
@@ -252,7 +255,6 @@ class TopObject:
             if basisName is None:
                 print("Must input a basis name!")
                 return None
-            self.PCAs[basisName] = PCA(100)
             cellData = pd.DataFrame(self.PCAs[basisName].fit_transform(cellData.T), index=cellData.columns).T
 
         # Process each cell type individually
@@ -374,35 +376,44 @@ class TopObject:
         return accuracies, predictions
 
     # Create correlation matrix between cell types of basis, helpful to determine if any features are overlapping
-    def getBasisCorrelations(self, specificBasis=None):
-        basis = self.basis if specificBasis is None else specificBasis
-        corr = basis.T.dot(basis) / basis.shape[0]
-        if specificBasis is None:
+    def getBasisCorrelations(self, basis=None, metric=None):
+        basis = self.basis if basis is None else basis
+        if metric is None or metric == "dot":
+            corr = basis.T.dot(basis)
+        elif metric == "pearson":
+            corr = basis.corr()
+        else:
+            print("Enter valid metric!")
+            return None
+        if basis is None:
             self.corr = corr 
         return corr
 
     # Create predictivity matrix to assess impact of cell type on gene expression
-    def getBasisPredictivity(self, specificBasis=None):
-        basis = self.basis if specificBasis is None else specificBasis
-        corr = self.corr if specificBasis is None else self.getBasisCorrelations(specificBasis=basis)
-        eta = np.linalg.inv(corr).dot(basis.T) / basis.shape[0]
-        self.predictivity = pd.DataFrame(eta, index=basis.columns, columns=basis.index)
-        return self.predictivity
+    def getBasisPredictivity(self, basis=None):
+        basisCopy = self.basis if basis is None else basis
+        corr = self.corr if basis is None else self.getBasisCorrelations(basis=basis)
+        eta = np.linalg.inv(corr).dot(basisCopy.T)
+        predictivity = pd.DataFrame(eta, index=basisCopy.columns, columns=basisCopy.index)
+        self.predictivity = predictivity if basis is None else None
+        return predictivity
 
     # Create score contribution matrix displaying product of predictivity and normalized expression
-    def getScoreContributions(self, specificBasis=None, subsetCategory=None, subsetName=None):
+    def getScoreContributions(self, basis=None, subsetCategory=None, subsetName=None, includeCriteria=None):
+
+        # Get label expressions
         scoreContributions = {}
-        labelExpression = self.processedData if hasattr(self, "processedData") else self.process()
-        if subsetCategory is not None and subsetName is not None:
-            labelExpression = labelExpression.loc[:, subsetCategory == subsetName]
-        predictivityMatrix = self.predictivity if specificBasis is None else self.getBasisPredictivity(specificBasis=specificBasis)
+        predictivityMatrix = self.predictivity if basis is None else self.getBasisPredictivity(basis=basis)
+        geneExpressions = self.processed if includeCriteria is None else self.processed.loc[:, includeCriteria]
+        # geneExpressions = geneExpressions if subsetCategory is None or subsetName is None else geneExpressions.loc[:, subsetCategory == subsetName]
+
+        # Multiply predictivity by expression for each basis label
         for label in predictivityMatrix.index:
             scoreContributions[label] = {}
-            commonGenes = np.intersect1d(labelExpression.index, predictivityMatrix.columns)
-            scoreContributions[label] = labelExpression.loc[commonGenes].multiply(predictivityMatrix.loc[label, commonGenes], axis=0)
+            commonGenes = np.intersect1d(geneExpressions.index, predictivityMatrix.columns)
+            scoreContributions[label] = geneExpressions.loc[commonGenes].multiply(predictivityMatrix.loc[label, commonGenes], axis=0)
 
-        if subsetName is None:
-            self.scoreContributions = scoreContributions
+        self.scoreContributions = scoreContributions
         return scoreContributions
 
     # Given a projection and a cell type in the basis, change annotation in source to reflect top labels of that cell type
@@ -416,7 +427,7 @@ class TopObject:
             if condition:
                 targetCells.append(sample)
 
-        self.anndata.obs[newCategoryName] = self.annData.obs[self.cellTypeColumn]
+        self.anndata.obs[newCategoryName] = self.anndata.obs[self.cellTypeColumn]
         self.anndata.obs[newCategoryName] = self.anndata.obs[newCategoryName].cat.add_categories([newLabelName])
 
         for sample in targetCells:
@@ -484,34 +495,83 @@ class TopObject:
 
         if batchJob:
             return proportionTestMap
-        return bestGenesAnalysis(proportionTestMap, proportions, trials)     
+        return bestGenesAnalysis(proportionTestMap, proportions, trials)
+
+    # Filter dataset to genes that maximize accurate identification of cell types given a proportion
+    def filterBestGenes(self, proportion):
+        processed = self.process() if self.processed is None or self.processed.shape != self.df.shape else self.processed
+        selector = SelectKBest(score_func=f_classif, k=int(proportion * len(self.df.index)))
+        trainSelected = selector.fit_transform(processed.T, self.annotations)
+        selectedFeatures = self.df.index[selector.get_support()]
+        self.setAnndata(self.anndata[:, self.df.index.isin(list(selectedFeatures))])
 
     # Get ortholog genes based on Ensembl mapping to another species
-    def getOrthologs(self, mapping, inplace=False):
-        
-        # Get genes with orthologs to other species in mapping
-        print("Finding orthologs...")
-        mg = mygene.MyGeneInfo()
-        testGenes = mg.querymany(mapping.index, field='symbol', size=1)
-        basisGenes = mg.querymany(mapping.values, field='symbol', size=1)
-
-        # Get symbols of genes
-        symbolMapping = pd.DataFrame(data={
-            "test": [val['symbol'] if 'symbol' in val.keys() else val['query'] for val in testGenes], 
-            "basis": [val['symbol'] if 'symbol' in val.keys() else val['query'] for val in basisGenes]})
+    def getOrthologs(self, mapping, inplace=False):    
 
         # Filter out genes without orthologs and set names side by side
         print("Filtering AnnData object for orthologs...")
-        validMap = symbolMapping[symbolMapping["test"].isin(self.df.index)]
+        validMap = mapping[mapping['test'].isin(self.df.index)]
         orthologAligned = self.anndata[:, validMap['test']].copy()
         orthologAligned.var_names = validMap['basis']
-        
+
+        if self.processed is not None:
+            self.processed = self.processed.loc[validMap['test'], :]
+            self.processed.index = validMap['basis']
+
         # Return, dropping duplicates if multiple target genes mapped to one basis gene
+        print("Dropping duplicates...")
         orthologAligned = orthologAligned[:, ~orthologAligned.var_names.duplicated()].copy()
         if inplace:
             self.setAnndata(orthologAligned)
+
         print("Done!")
         return orthologAligned
+
+    # Combine df and annotations of two TopObjects   ### TODO: Check that optimization works, remove extraneous code
+    def mergeWithOther(self, topObject, inplace=False, includeCriteriaSelf=None, includeCriteriaOther=None, indexName="gene"):
+    
+        # Filter and align TopObjects
+        print("Aligning dfs...")
+        if inplace:
+            self.df = self.df if includeCriteriaSelf is None else self.df.loc[:, includeCriteriaSelf]
+            topObject.df = topObject.df if includeCriteriaOther is None else topObject.df.loc[:, includeCriteriaOther]
+            self.df.index.name = topObject.df.index.name = indexName
+        if not inplace:
+            dfSelf = self.df if includeCriteriaSelf is None else self.df.loc[:, includeCriteriaSelf]
+            dfOther = topObject.df if includeCriteriaOther is None else topObject.df.loc[:, includeCriteriaOther]
+            dfSelf.index.name = dfOther.index.name = indexName
+
+        # Get metadata
+        annotations = pd.concat([self.annotations, topObject.annotations])
+
+        # Replace dataset with new, combined data
+        print("Merging TopObjects...")
+        combinedObject = self if inplace else self.copy()
+        if inplace:
+            self.df = pd.merge(self.df, topObject.df, on=indexName, how="inner")
+            combinedObject.setAnndata(
+                ad.AnnData(self.df.T, var=pd.DataFrame(self.df.index, index=self.df.index), 
+                        obs=pd.DataFrame({self.cellTypeColumn: annotations[annotations.index.isin(self.df.columns)]}, index=self.df.columns)), 
+                df=self.df
+            )
+        else:
+            combinedDF = pd.merge(dfSelf, dfOther, on=indexName, how="inner")
+            del dfSelf, dfOther
+            combinedObject.setAnndata(
+                ad.AnnData(combinedDF.T, var=pd.DataFrame(combinedDF.index, index=combinedDF.index), 
+                        obs=pd.DataFrame({self.cellTypeColumn: annotations[annotations.index.isin(combinedDF.columns)]}, index=combinedDF.columns)), 
+                df=combinedDF
+            )
+        # combinedObject.df = combinedDF
+        combinedObject.processed = None
+        # combinedObject.anndata.var = pd.DataFrame(combinedDF.index, index=combinedDF.index)
+        # combinedObject.anndata.obs = pd.DataFrame({self.cellTypeColumn: list(annotationsSelf) + list(annotationsOther)}, index=combinedDF.columns)
+        # combinedObject.setMetadata()
+        print("Done merging!")
+    
+        # Return combined object if not merging inplace
+        if not inplace:
+            return combinedObject
 
 
 # Gets a dict for passing in numbers of each cell type to downsampling function
@@ -747,6 +807,7 @@ def getOrthologMapping(basisSpecies, targetSpecies, ensemblMart, ensemblConfig):
     homolog_attr = f"{source_prefix}_homolog_ensembl_gene"
     
     try:
+        print("Generating mapping...")
         dataset = ensemblMart.datasets[target_dataset_name]
         df = dataset.query(attributes=['ensembl_gene_id', homolog_attr], use_attr_names=True)
         df = df.dropna().drop_duplicates()
@@ -754,7 +815,21 @@ def getOrthologMapping(basisSpecies, targetSpecies, ensemblMart, ensemblConfig):
         df = df.drop_duplicates(subset=['ensembl_gene_id'], keep='first')
         df = df.drop_duplicates(subset=[homolog_attr], keep='first')
         
-        return df.set_index('ensembl_gene_id')[homolog_attr]
+        mapping = df.set_index('ensembl_gene_id')[homolog_attr]
+        
+        # Get genes with orthologs to other species in mapping
+        print("Finding orthologs...")
+        mg = mygene.MyGeneInfo()
+        testGenes = mg.querymany(mapping.index, field='symbol', size=1)
+        basisGenes = mg.querymany(mapping.values, field='symbol', size=1)
+
+        # Get symbols of genes
+        symbolMapping = pd.DataFrame(data={
+            "test": [val['symbol'] if 'symbol' in val.keys() else val['query'] for val in testGenes], 
+            "basis": [val['symbol'] if 'symbol' in val.keys() else val['query'] for val in basisGenes]})
+
+        return symbolMapping
+
     except Exception as e:
         print(f"  Warning: Could not fetch mapping for {targetSpecies}->{basisSpecies}: {e}")
         return pd.Series(dtype=str)

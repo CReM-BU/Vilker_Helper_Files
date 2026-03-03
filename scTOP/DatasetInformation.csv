@@ -12,10 +12,10 @@ Kaminski2025,renamedFinal,"['Ciliated', 'ATII', 'ATI', 'Basal', 'Club', 'Goblet'
 Kaminski2025AllNucleiInVivoEpithelial,renamedFinal,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Kaminski2025AllNucleiInVivoEpithelial.h5ad,,human,,,,
 Kaminski2025AllNucleiInVivoStromal,renamedFinal,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Kaminski2025AllNucleiInVivoStromal.h5ad,,human,,,,
 Kathiriya,celltypes,"[ABI1, ABI2, Ciliated, Basal, AEC2s, Club ]",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Kathiriya.h5ad,days,human,False,False,,
-Killian,celltype,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Killian.h5ad,diff_day,mouse,,,,
+Killian,celltype,"[Distal Lung Progenitors, Differentiating Alveolar Progenitors, Primordial Lung Progenitors, iAEC2]",,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Killian.h5ad,diff_day,mouse,,,,
 Kobayashi,cell_type,"[AEC1, AEC2, Ctgf+, AEC2-proliferating, Lgals3+]",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Kobayashi.h5ad,,mouse,False,False,,
 KostasI73T,cell_type2,,"['Fibrotic', 'Alveolar', 'Adventitial', 'Inflammatory', 'Pericytes', 'Smooth Muscle', 'Peribronchial']",/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/I73T_Epithelial_and_Mesenchymal_clusters_092225.h5ad,,mouse,,True,,
-Lauren_06_24_25,cluster_names,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Lauren/objects/Lauren_06_24_25.h5ad,,human,,,,in vitro alveolar epithelium
+Lauren_06_24_25,subcluster_names,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/LaurenTGFB.h5ad,,Human,,,,in vitro TGFB treatment
 LungMAP,celltype_level3,"['Basal', 'Suprabasal', 'AT2', 'AT1', 'Ciliated', 'RAS', 'Goblet', 'Secretory']",,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/LungMAP.h5ad,,human,,,,Large lung reference
 McCall,celltype,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/McCall.h5ad,,mouse,,,,"Alveolar epithelium, multi bleo"
 McCallReannotated,subcluster,,['Immune'],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/McCallReannotated.h5ad,,mouse,,,,
@@ -31,6 +31,8 @@ Tsukui,celltype,"[Alveolar1, Fibrotic, Alveolar2, Inflammatory, Adventitial, Smo
 TsukuiHuman,newid,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/TsukuiHuman.h5ad,,human,,,,
 Vannan,celltype,"[AT2, Multiciliated, Basal, AT1, Transitional AT2, RASC, Goblet, Secretory, KRT5-/KRT17+, Proliferating AT2, Proliferating Airway, PNEC]",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/VannanRNA.h5ad,,human,False,False,,
 VannanNiche,celltype,"[AT2, Multiciliated, Basal, AT1, Transitional AT2, RASC, Goblet, Secretory, KRT5-/KRT17+, Proliferating AT2, Proliferating Airway, PNEC]",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/VannanNiche.h5ad,,human,False,False,,
-Zacharias,celltype,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Zacharias.h5ad,DataSet,mouse,,,,"Mouse alveolar  epithelium, PRC2 deletion"
+Zacharias,celltype,[],,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Zacharias.h5ad,DataSet,mouse,,,,"Mouse alveolar  epithelium, PRC2 deletion"
+PPFE,Celltype,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/PPFE.h5ad,,Human,,,,"Paper, authors not yet provided"
 ,,,,,,,,,,
+LungMAPEpithelial,celltype_level3,"['AT1', 'AT2', 'Secretory', 'Basal', 'Ciliated', 'Goblet']",,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/LungMAPEpithelial.h5ad,,Human,,,,Epithelial-only reference
 ,,,,,,,,,,
