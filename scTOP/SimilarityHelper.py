@@ -24,10 +24,14 @@ from sklearn.linear_model import LinearRegression
 # from sklearn.decomposition import PCA
 from sklearn.metrics import confusion_matrix
 from sklearn import preprocessing
+import polars as pl
+from scipy.io import mmwrite
 from scipy.sparse import csr_matrix
+from scipy.stats import ttest_1samp
 import os
 os.environ['SCIPY_ARRAY_API'] = '1'
 from imblearn.under_sampling import RandomUnderSampler
+import random
 # import hdf5plugin
 
 
@@ -71,12 +75,11 @@ def loadBasis(file=None, basisCollection=None, basisName=None, geneIndex="gene",
 
 
 # Converts files in raw format (straight from GEO usually) to AnnData. Set geneHeader to None if no header
-def rawToAnnData(countsPath, genesPath, metadataPath,
-                 matrix=False, transposeCounts=False, geneSeparator="\t",
-                 metadataSeparator="\t", metadataIndexColumn=None, geneHeader="infer", geneColumnIdx=0, skipMeadataRow=None, skipCountsRow=None):
+def rawToAnnData(countsPath, genesPath, metadataPath, barcodesPath=None,
+                 matrix=False, transposeCounts=True, geneSeparator="\t", metadataSeparator="\t", barcodesSeparator="\t", metadataIndexColumn=None, geneHeader="infer", barcodesHeader="infer", geneColumnIdx=0, skipMetadataRow=None, skipCountsRow=None):
     # Set counts
     print("Setting counts...")
-    counts = sc.read_mtx(countsPath) if matrix else ad.AnnData(pd.read_csv(countsPath))
+    counts = sc.read_mtx(countsPath) if matrix or countsPath.endswith("mtx") else ad.AnnData(pd.read_csv(countsPath))
     try:
         annObject = counts.T if transposeCounts else counts
     except:
@@ -87,9 +90,12 @@ def rawToAnnData(countsPath, genesPath, metadataPath,
     if metadataPath is not None:
         try:
             print("Setting metadata...")
-            metadata = pd.read_csv(metadataPath, sep=metadataSeparator) if skipRow is None else pd.read_csv(metadataPath, sep=metadataSeparator, skiprows=[skipRow])
+            metadata = pd.read_csv(metadataPath, sep=metadataSeparator) if skipMetadataRow is None else pd.read_csv(metadataPath, sep=metadataSeparator, skiprows=[skipMetadataRow])
             metadata.replace(np.nan, '', inplace=True)
-            metadata.set_index(metadataIndexColumn or metadata.columns[0], inplace=True)
+            if barcodesPath is not None:
+                metadata.index = pd.read_csv(barcodesPath, sep=barcodesSeparator, header=barcodesHeader)
+            else:
+                metadata.set_index(metadataIndexColumn or metadata.columns[0], inplace=True)
             annObject.obs = metadata
             annObject.obs.index.names = ["index"]
         except:
@@ -103,6 +109,7 @@ def rawToAnnData(countsPath, genesPath, metadataPath,
         # genes.columns[geneColumnIdx] = ["name"]
         genes.rename(columns={genes.columns[geneColumnIdx]: "name"}, inplace=True)
         genes.set_index("name", inplace=True)
+        print("Adding genes to AnnData...")
         annObject.var = genes
         annObject.var.index.names = ["index"]
     except:
@@ -135,6 +142,45 @@ def writeAnnData(annDataObj, outFile, indexReplace=None):
     print("Finished!")
 
 
+# Use run-length encoding and sparse matrix to store processed data as small as possible
+def writeProcessed(processed, outFile):
+    print("Converting to polars...")
+    polarsProc = pl.from_pandas(processed)
+
+    print("Applying RLE...")
+    rleResults = {}
+    for col in polarsProc.columns:
+        unnested = polarsProc[col].rle().struct.unnest()
+        rleResults[f"{col}_len"] = unnested["len"]
+        rleResults[f"{col}_value"] = unnested["value"]
+
+    print("Padding with 0s...")
+    maxLen = max(s.len() for s in rleResults.values())
+    rlePadded = {name: s.extend_constant(0, maxLen - s.len()) if s.len() < maxLen else s for name, s in rleResults.items()}
+    rleStacked = np.column_stack([rlePadded[name].to_numpy() for name in rlePadded])
+
+    print("Converting to sparse and writing...")
+    mmwrite(outFile, csr_matrix(rleStacked))
+
+
+# Decompress sparse processed data and reverse run-length encoding
+def readProcessed(genes, colNames, fileName):
+    print("Reading matrix and sending to array...")
+    denseMatrix = sc.read_mtx(fileName).X.toarray()
+    colPairs = [[col + "_len", col + "_value"] for col in colNames]
+    colPairs = [key for sublist in colPairs for key in sublist]
+
+    print("")
+    reconstructed = {}
+    for col in colNames:
+        lenCol, valCol = (denseMatrix[:, colPairs.index(f"{col}_len")], denseMatrix[:, colPairs.index(f"{col}_value")])
+        mask = lenCol != 0
+        lens, vals = (lenCol[mask].astype(int), valCol[mask])
+        reconstructed[col] = np.repeat(vals, lens)
+    
+    return pd.DataFrame(reconstructed, index=genes)
+
+    
 # Get average projections given time series data
 def getTimeAveragedProjections(basis, df, cellLabels, times, timeSortFunc, substituteMap=None):
     projections = {}
@@ -160,10 +206,8 @@ def getTimeAveragedProjections(basis, df, cellLabels, times, timeSortFunc, subst
 # Format: Key (basis label) -> Key (source label) -> Value (projection score list for cells with source label onto the basis label)
 def getMatchingProjections(topObject, projectionName, basisKeep=None, testKeep=None, includeCriteria=None, prefix=None, alternateAnnotations=None):
 
-    # If no specific columns provided, use all columns
     projections = topObject.projections[projectionName]
-    if includeCriteria is not None:
-        projections = projections.loc[:, includeCriteria]
+    projections = projections if includeCriteria is None else projections.loc[:, includeCriteria]
     if basisKeep is None:
         basisKeep = sorted(projections.index)
     if testKeep is None:
@@ -196,12 +240,23 @@ def getMatchingProjections(topObject, projectionName, basisKeep=None, testKeep=N
 
 
 # Undersample cell types based on a count maximum
-def underSample(df, annotations, maxCount, seed=1):
+def underSample(df, annotations, maxCount, seed=1, keepFull=[]):
     valueCounts = annotations.value_counts()
-    labelCountsMap = {label: int(valueCounts[label]) if int(valueCounts[label]) < maxCount else maxCount for label in set(annotations)}
+    labelCountsMap = {label: int(valueCounts[label]) if int(valueCounts[label]) < maxCount or label in keepFull else maxCount for label in set(annotations)}
     rus = RandomUnderSampler(sampling_strategy=labelCountsMap, random_state=seed)
     dfUntransposed, annotations = rus.fit_resample(df.T, annotations)
     return dfUntransposed.T, annotations
+
+
+# Get the dimensions a 2D plot should be
+def getBounds(projection, celltype1, celltype2, celltype3=None):
+    x, y = (projection.loc[celltype1], projection.loc[celltype2])
+    xBounds = (math.floor(x.min() * 20) / 20, math.ceil(x.max() * 20) / 20)
+    yBounds = (math.floor(y.min() * 20) / 20, math.ceil(y.max() * 20) / 20)
+    if celltype3 is not None:
+        z = projection.loc[celltype3]
+        return xBounds, yBounds, (math.floor(z.min() * 20) / 20, math.ceil(z.max() * 20) / 20)
+    return xBounds, yBounds
 
 
 # Takes as input a geneMap which maps genes against directions of expression in the expected cluster, adds cutoffs required for significance
@@ -272,15 +327,65 @@ def setupOverlay(topObjects, basisName, includeCriteriaList, basis=None, forcePr
             if getExpressions:
                 otherExpressions.append(topObject.processed[includeCriteriaList[i]] if includeCriteriaList[i] is not None else topObject.processed)
         if multipleTopObjects:
-            otherNames.append(topObject.name)
+            otherNames.append(topObject.identifier)
 
-    # Arrange return tuple
+    # Arrange return list
     toReturn = [otherProjections, otherAnnotations]
     if multipleTopObjects:
         toReturn.append(otherNames)
     if getExpressions:
         toReturn.append(otherExpressions)
     return tuple(toReturn)
+
+
+# Create df of descriptive values for a cluster's projection as related to clusters in the basis
+def getProjectionStats(topObject, projectionName, celltype, includeCriteria=None, target="", onlyQuantiles=False, outFile=None):
+    proj = topObject.projections[projectionName]
+    criteria = topObject.annotations == celltype
+    criteria = criteria if includeCriteria is None else np.logical_and(criteria, includeCriteria)
+    proj = proj.loc[:, criteria]
+    output = {label: {} for label in proj.index}
+
+    for label in proj.index:
+        projFilt = proj.loc[label, :]
+        quantiles = np.quantile(projFilt, [0.05, 0.25, 0.5, 0.75, 0.95]) #Examine
+        output[label]["5% Quantile"], output[label]["25% Quantile"], output[label]["50% Quantile"], output[label]["75% Quantile"], output[label]["95% Quantile"] = quantiles
+        if onlyQuantiles:
+            continue
+        output[label][celltype + " Count"] = len(projFilt)
+        projFilt = projFilt[projFilt > 0.1]
+        output[label]["Over Threshold Count"] = len(projFilt)
+        output[label]["Over Threshold Proportion"] = output[label]["Over Threshold Count"] / output[label][celltype + " Count"]
+        if label == target:
+            newMeans = proj[projFilt.index].mean(axis=1)
+            for newLabel in newMeans.index:
+                output[newLabel]["Over Target Threshold Mean"] = newMeans[newLabel]
+    output = pd.DataFrame.from_dict(output).T
+    if outFile is not None:
+        output.to_csv(outFile)
+    return output
+
+
+# Create df of descriptive values for each label in a datset's projections as related to a target basis cell type
+def getProjectionStatsFocused(topObject, projectionName, target, includeCriteria=None, outFile=None):
+    output = {}
+    proj = topObject.projections[projectionName]
+    
+    for label in topObject.sortedCellTypes:
+        criteria = topObject.annotations == label
+        criteria = criteria if includeCriteria is None else np.logical_and(criteria, includeCriteria)
+        projFilt = proj.loc[:, criteria]
+        output[label] = {}
+        output[label]["Count"] = len(projFilt.columns)
+        projFilt = projFilt.loc[target, :]
+        output[label]["Mean Projection"] = projFilt.mean(axis=0)
+        projFilt = projFilt[projFilt > 0.1]
+        output[label]["Over Threshold Count"] = len(projFilt)
+        output[label]["Over Threshold Proportion"] = output[label]["Over Threshold Count"] / output[label]["Count"]
+    output = pd.DataFrame.from_dict(output).T
+    if outFile is not None:
+        output.to_csv(outFile)
+    return output
 
 
 ## ========================= ##
@@ -374,35 +479,38 @@ def plot_top(projections, tSNE_data, minimum_cells=50, ax=None, **kwargs):
 # Create scatter plot showing projection scores for two cell types, with the option to color according to marker gene
 def plotTwo(topObject, projectionName, celltype1, celltype2, 
        additionalProjections=[], additionalAnnotations=[], additionalExpressions=[], additionalNames=[], additionalAlternates=[],
-       gene=None, geneExpressions=None, plotMultiple=False, singleColorbar=False, unsupervisedContour=False, supervisedContour=False, maxLabelCount=None, 
-       alternateColumn=None, alternateAnnotations=None, alternateProjections=None, alternateExpressions=None,
-       ax=None, figX=8, figY=8, DPI=100, includeCriteria=None, name=None, hue=None, labels=None, palette=None, alpha=0.5, source="seaborn", 
-       markers=None, markerSize=40, legendMarkerScale=2, legendWidth=116.625, lineWidth=1.5, legendSpacing=0.05, xBounds=None, yBounds=None, plotInRow=False, plotThreshold=True, seed=0,
-       axisFontSize=15, legendFontSize=13, legendTitle="Test Set Cell Labels", title="", outFile=None, show=True):
+       alternateColumn=None, alternateAnnotations=None, alternateProjections=None, alternateExpressions=None, gene=None, geneExpressions=None,
+       plotMultiple=False, singleColorbar=False, unsupervisedContour=False, supervisedContour=False, maxLabelCount=None, keepFull=[], seed=1, axisRenames=(None, None),
+       ax=None, figX=12, figY=12, DPI=100, includeCriteria=None, name=None, hue=None, labels=None, labelDimensions=False, overlayLabels=None, palette=None, alpha=1, source="seaborn", 
+       markers=None, markerSize=80, legendMarkerScale=3.5, legendWidth=116.625, lineWidth=1.5, legendSpacing=0.05, xBounds=None, yBounds=None, plotThreshold=True, 
+       axisFontSize=40, legendFontSize=28, titleFontSize=None, legendTitle="Test Set Cell Labels", legendInner=True, title=None, 
+       getSamples=False, outFile=None, show=True):
 
     # Set data elements
     annotations = topObject.annotations if alternateAnnotations is None else alternateAnnotations
     projections = topObject.projections[projectionName] if alternateProjections is None else alternateProjections
     geneExpressions = None if not gene else topObject.processed if alternateExpressions is None else alternateExpressions
-    annotations = topObject.annotations if alternateAnnotations is None else alternateAnnotations
     alternateColumnValues = None if not alternateColumn else topObject.metadata[alternateColumn]
-    name = topObject.name if name is None else name
+    name = topObject.identifier if name is None else name
+    multipleProjections = len(additionalProjections) > 0
+    xBounds, yBounds = getBounds(projections.loc[:, annotations.isin(labels)], celltype1, celltype2) if labelDimensions and not multipleProjections else (xBounds, yBounds)
 
     # Filter dataset
     if includeCriteria is not None:
-        annotations = annotations[includeCriteria]
-        projections = projections.loc[:, includeCriteria]    
+        annotations, projections = (annotations[includeCriteria], projections.loc[:, includeCriteria])
         geneExpressions = None if not gene else geneExpressions.loc[:, includeCriteria]
         alternateColumnValues = None if not alternateColumn else alternateColumnValues[includeCriteria]
     
-    # If overlaying multiple sets of projections, combine along shared genes (ideally filter shared genes before projecting to reduce bias)
-    if len(additionalProjections) > 0:
+    # If overlaying multiple sets of projections, combine along shared genes
+    if multipleProjections:
         projections = pd.concat(additionalProjections + [projections], axis=1, join='inner')
         annotations = additionalAnnotations + [annotations]
         alternateColumnValues = additionalAlternates + [alternateColumnValues] if alternateColumn is not None else None
         combinedNames = additionalNames + [name]
         combinedAnnotations = []
         combinedAlternates = [] if alternateColumn is not None else None
+
+        # For each projection, add its name to its features so they can be distinguished from each other
         for i in range(len(combinedNames)):
             combinedAnnotations.append(annotations[i].apply(lambda annotation: combinedNames[i] + ' ' + annotation))
             if combinedAlternates is not None:
@@ -410,25 +518,53 @@ def plotTwo(topObject, projectionName, celltype1, celltype2,
         annotations = pd.concat(combinedAnnotations)
         alternateColumn = pd.concat(combinedAlternates) if alternateColumn is not None else None
         geneExpressions = None if not gene else pd.concat(additionalExpressions + [geneExpressions], axis=1, join='inner')
+        if labelDimensions:
+            xBounds, yBounds = getBounds(projections.loc[:, annotations.index], celltype1, celltype2)
+
+            if overlayLabels is not None:
+                labels = sorted(annotations.unique())
+                includeCriteria = annotations.isin(overlayLabels)
+                annotations, projections = (annotations[includeCriteria], projections.loc[:, includeCriteria])
+                geneExpressions = None if not gene else geneExpressions.loc[:, includeCriteria]
 
     # Undersample cell types based on a count maximum
-    projections, annotations = (projections, annotations) if maxLabelCount is None else underSample(projections, annotations, maxLabelCount, seed=seed)
+    if maxLabelCount is not None:
+        projections, annotations = TopObject.downsample(projections, annotations, maxLabelCount, keepFull=keepFull, seed=seed)
+        geneExpressions = None if not gene else geneExpressions[annotations.index]
+        alternateColumnValues = None if not alternateColumn else alternateColumnValues[annotations.index]
 
-    # Set axes and key parameters for current plot
-    plt.rcParams['axes.edgecolor'] = 'black'
-    plt.rcParams['figure.dpi'] = 100
-    plt.rcParams['axes.linewidth'] = lineWidth
-
-    legendSpace = 0 if gene or alternateColumn else legendWidth / plt.rcParams['figure.dpi'] + legendSpacing
-    fig, ax = plt.subplots(1, 1, figsize=(figX + legendSpace, figY)) if ax is None else (None, ax)
+    # Reorder so high expression genes are stacked on top if plotting gene heatmap
     if gene:
         order = geneExpressions.loc[gene].T.sort_values(ascending=True).index
-        projections = projections.loc[:, order]
-        annotations = annotations.loc[order]
-        geneExpressions = geneExpressions.loc[:, order]
+        geneExpressions = geneExpressions[order]
+    else:
+        order = random.sample(list(annotations.index), len(annotations.index))
+    projections, annotations = (projections[order], annotations[order])
+    
+    # Set axes and key parameters for plot
+    plt.rcParams['axes.edgecolor'] = 'black'
+    plt.rcParams['figure.dpi'] = DPI
+    plt.rcParams['axes.linewidth'] = lineWidth
+    plt.rcParams['font.family'] = 'serif'
+    # plt.rcParams['font.serif'] = 'STIXGeneral'
+    # plt.rcParams['mathtext.fontset'] = 'stix'
+    
+    # plt.rcParams.update({
+    #     "font.size": 14, 
+    #     "axes.labelsize": 16, 
+    #     "axes.titlesize": 18, 
+    #     "xtick.labelsize": 12, 
+    #     "ytick.labelsize": 12,
+    #     "legend.fontsize": 12,
+    #     "figure.titlesize": 20,
+    #     "figure.dpi": 300,
+    #     "axes.linewidth": 0.8
+    # })
+    legendSpace = 0 if gene or alternateColumn else legendWidth / plt.rcParams['figure.dpi'] + legendSpacing
+    fig, ax = plt.subplots(1, 1, figsize=(figX + legendSpace, figY)) if ax is None else (None, ax)
     x, y = (projections.loc[celltype1], projections.loc[celltype2])
     labels = sorted(annotations.unique()) if labels is None else labels
-    palette = setPalette(labels, source=source) if palette is None and gene is None else palette
+    palette = setPalette(labels, source=source) if palette is None and gene is None and alternateColumn is None else palette
     markers = setMarkers(labels) if markers is None else markers
     legendTitle = "" if legendTitle is None else legendTitle
 
@@ -441,7 +577,7 @@ def plotTwo(topObject, projectionName, celltype1, celltype2,
                 labels=labels, markers=markers, markerSize=markerSize, alpha=alpha, axisFontSize=axisFontSize, singleColorbar=singleColorbar)
     else:  # If labeling is by cell type
         ax = testLabelPlot(ax, x, y, annotations, palette, 
-                labels=labels, title=legendTitle, markers=markers, markerSize=markerSize, alpha=alpha, legendMarkerScale=legendMarkerScale, axisFontSize=axisFontSize, legendFontSize=legendFontSize, plotMultiple=plotMultiple, legendSpace=legendSpace)
+                labels=labels, title=legendTitle, markers=markers, markerSize=markerSize, alpha=alpha, legendMarkerScale=legendMarkerScale, axisFontSize=axisFontSize, legendFontSize=legendFontSize, legendInner=legendInner, plotMultiple=plotMultiple, legendSpace=legendSpace)
         # ax.set_aspect('equal')
 
     # Add contours if desired
@@ -459,16 +595,14 @@ def plotTwo(topObject, projectionName, celltype1, celltype2,
         ax.set_xlim(xBounds[0], xBounds[1])
     if yBounds is not None:
         ax.set_ylim(yBounds[0], yBounds[1])
-    ax.set_xlabel(projectionName + " " + celltype1 + " Cell Score", fontsize=axisFontSize)
-    ax.set_ylabel(projectionName + " " + celltype2 + " Cell Score", fontsize=axisFontSize)
-    # ax.set_xlabel(celltype1 + " Cell Score", fontsize=axisFontSize)
-    # ax.set_ylabel(celltype2 + " Cell Score", fontsize=axisFontSize)
+    ax.set_xlabel(axisRenames[0] or projectionName + " " + celltype1 + " Cell Score", fontsize=axisFontSize)
+    ax.set_ylabel(axisRenames[1] or projectionName + " " + celltype2 + " Cell Score", fontsize=axisFontSize)
 
     # Set text for plot
-    if title == "" and show and len(additionalProjections) == 0:
-        title = topObject.name + " Projected Onto " + projectionName + " Reference"
-    if title is not None:
-        plt.title(title, fontsize=axisFontSize // 0.9)
+    if title is None and show and len(additionalProjections) == 0:
+        title = topObject.identifier + " Projected Onto " + projectionName + " Reference"
+    if title == "":
+        plt.title(title, fontsize=titleFontSize or axisFontSize // 0.9)
 
     if plotMultiple:
         # ax.set_aspect('equal')
@@ -480,12 +614,12 @@ def plotTwo(topObject, projectionName, celltype1, celltype2,
             plt.savefig(outFile, bbox_inches='tight', dpi=DPI)
         if show:
             plt.show()
-    return ax
+    return (ax, annotations.index) if getSamples else ax
 
 
 # Creates a Seaborn 2D scatter plot using projections onto basis columns as axes and gene expressions to identify points. Helper for plotTwo
 def geneExpressionPlot(ax, x, y, gene, geneExpressions, annotations, palette,
-                       labels=None, markers=True, markerSize=40, axisFontSize=16, alpha=0.5, plotMultiple=False, singleColorbar=False):
+                       labels=None, markers=True, markerSize=40, axisFontSize=16, alpha=1, plotMultiple=False, singleColorbar=False):
     palette, scalarmap = createColorbar(geneExpressions.loc[gene]) if palette is None else (palette, None)
     plot = sns.scatterplot(x=x, y=y, ax=ax, hue=geneExpressions.loc[gene], style=annotations, style_order=labels, markers=markers, s=markerSize, palette=palette, alpha=alpha, linewidth=0.15)
     if not singleColorbar:
@@ -500,7 +634,7 @@ def geneExpressionPlot(ax, x, y, gene, geneExpressions, annotations, palette,
 
 # Creates a Seaborn 2D scatter plot using projections onto basis columns as axes and a specified column's values to identify points. Helper for plotTwo
 def alternateColumnPlot(ax, x, y, alternateColumn, alternateColumnValues, annotations, palette,
-                       labels=None, markers=True, markerSize=40, axisFontSize=16, alpha=0.5, plotMultiple=False, singleColorbar=False):
+                       labels=None, markers=True, markerSize=40, axisFontSize=16, alpha=1, plotMultiple=False, singleColorbar=False):
     palette, scalarmap = createColorbar(alternateColumnValues) if palette is None else (palette, None)
     plot = sns.scatterplot(x=x, y=y, ax=ax, hue=alternateColumnValues, style=annotations, style_order=labels, markers=markers, s=markerSize, palette=palette, alpha=alpha, linewidth=0.15)
 
@@ -514,13 +648,20 @@ def alternateColumnPlot(ax, x, y, alternateColumn, alternateColumnValues, annota
 
 
 # Creates a Seaborn 2D scatterplot using projections onto basis columns as axes and source labels to identify points
-def testLabelPlot(ax, x, y, annotations, palette, title="", labels=None, markers=True, markerSize=40, legendMarkerScale=2, axisFontSize=16, legendFontSize=16, alpha=0.5, plotMultiple=False, legendSpace=1):
+def testLabelPlot(ax, x, y, annotations, palette, title="", labels=None, markers=True, markerSize=40, legendMarkerScale=2, axisFontSize=16, legendFontSize=16, legendInner=False, alpha=1, plotMultiple=False, legendSpace=1):
     plot = sns.scatterplot(x=x, y=y, ax=ax, hue=annotations, style=annotations, hue_order=labels, style_order=labels, markers=markers, s=markerSize, palette=palette, alpha=alpha, linewidth=0.15)
     if plotMultiple:
         plot.legend_.remove()
     else:
-        leg = ax.legend(title=title, title_fontsize=legendFontSize // 0.9, fontsize=legendFontSize, markerscale=legendMarkerScale, bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
-        plt.subplots_adjust(right=legendSpace)
+        newHandles, newLabels = ax.get_legend_handles_labels()
+        if labels is not None:
+            keepIndices = [i for i in range(len(labels)) if labels[i] in sorted(annotations.unique())]
+            newHandles, newLabels = ([newHandles[i] for i in keepIndices], [newLabels[i] for i in keepIndices])
+        bbox, loc, padding, right = (None, 'upper right', 0.5, None) if legendInner else ((1.05, 1), 'upper left', 0., legendSpace) 
+        # leg = ax.legend(newHandles, newLabels, title=title, title_fontsize=legendFontSize // 0.9, fontsize=legendFontSize, markerscale=legendMarkerScale)
+        leg = ax.legend(newHandles, newLabels, title=title, title_fontsize=legendFontSize // 0.9, fontsize=legendFontSize, markerscale=legendMarkerScale, bbox_to_anchor=bbox, loc=loc, borderaxespad=padding)
+
+        plt.subplots_adjust(right=right)
     return ax
 
 
@@ -546,10 +687,10 @@ def supervisedContourPlot(ax, x, y, annotations, labels, palette=None):
 
 # Plot multiple 2D similarity plots at once based on some field, such as time (Note: figure out difference if any between labels and annotations[toInclude])
 def plotTwoMultiple(topObject, projectionName, celltype1, celltype2,
-                    projections=None, subsetCategory=None, subsetNames=None, gene=None, includeCriteria=None, singleColorbar=True,
-                    unsupervisedContour=False, supervisedContour=False, maxLabelCount=None, alternateColumn=None, seed=None,
-                    xBounds=None, yBounds=None, plotInRow=False, axisFontSize=24, legendFontSize=24, labels=None, alpha=0.5, DPI=100, source="seaborn",
-                    legendMarkerScale=0.5, markerSize=40, titleFontSize=36, title="", caption=None, outFile=None):
+                    projections=None, subsetCategory=None, subsetNames=None, gene=None, includeCriteria=None, singleColorbar=True, figX=8, figY=8,
+                    unsupervisedContour=False, supervisedContour=False, maxLabelCount=None, keepFull=[], alternateColumn=None, seed=None,
+                    xBounds=None, yBounds=None, plotInRow=False, plotThreshold=True, axisFontSize=24, legendFontSize=32, labels=None, alpha=1, DPI=100, source="seaborn",
+                    legendMarkerScale=0.7, markerSize=40, titleFontSize=36, title=None, caption=None, outFile=None):
 
     # Initialize categories
     includeCriteria = includeCriteria if includeCriteria is not None else ~topObject.annotations.isin([])
@@ -557,16 +698,17 @@ def plotTwoMultiple(topObject, projectionName, celltype1, celltype2,
     projections = topObject.projections[projectionName]
     projections = projections if includeCriteria is None else projections.loc[:, includeCriteria]
     x, y = (projections.loc[celltype1], projections.loc[celltype2])
-    xBounds = (math.floor(x.min() * 10) / 10, math.ceil(x.max() * 10) / 10) if xBounds is None else xBounds
-    yBounds = (math.floor(y.min() * 10) / 10, math.ceil(y.max() * 10) / 10) if yBounds is None else yBounds
-    subsetCategory = topObject.metadata[topObject.timeColumn] if subsetCategory is None else subsetCategory
-    subsetNames = topObject.timesSorted if subsetNames is None else subsetNames
+    xBounds = (math.floor(x.min() * 20) / 20, math.ceil(x.max() * 20) / 20) if xBounds is None else xBounds
+    yBounds = (math.floor(y.min() * 20) / 20, math.ceil(y.max() * 20) / 20) if yBounds is None else yBounds
+    subsetNames = subsetNames if subsetNames is not None else topObject.timesSorted if subsetCategory is None else sorted(list(set(subsetCategory)))
+    subsetCategory = (topObject.metadata[topObject.timeColumn] if subsetCategory is None else subsetCategory)[annotations.index]
+    # subsetCategory = subsetCategory[annotations.index]
 
     # Get subplots
     subsetCount = len(subsetNames)
     dimX = subsetCount if plotInRow else math.ceil(math.sqrt(subsetCount))
     dimY = 1 if plotInRow else math.ceil(subsetCount / dimX)
-    fig = plt.figure(figsize=(dimX * 12, dimY * 12), constrained_layout=True)
+    fig = plt.figure(figsize=(dimX * figX, dimY * figY), constrained_layout=True)
     gs = GridSpec(dimY, dimX, figure=fig)
     availableSpots = dimX * dimY
 
@@ -590,11 +732,11 @@ def plotTwoMultiple(topObject, projectionName, celltype1, celltype2,
     for i in range(subsetCount):
         subset = subsetNames[i]
         # toInclude = np.logical_and(subsetCategory == subset, includeCriteria) if includeCriteria is not None else subsetCategory == subset
-        ax = plotTwo(topObject, projectionName, celltype1, celltype2, alternateProjections=projections,
-            ax=axs[i], labels=labels, gene=gene, geneExpressions=geneExpressions if gene else None, alternateColumn=alternateColumn, 
+        ax = plotTwo(topObject, projectionName, celltype1, celltype2, alternateProjections=projections, alternateAnnotations=annotations, alternateColumn=alternateColumn,
+            ax=axs[i], labels=labels, gene=gene, geneExpressions=geneExpressions if gene else None, 
             unsupervisedContour=unsupervisedContour, supervisedContour=supervisedContour, plotMultiple=True, singleColorbar=singleColorbar, 
-            plotInRow=plotInRow, maxLabelCount=maxLabelCount, xBounds=xBounds, yBounds=yBounds, seed=seed, includeCriteria=subsetCategory == subset,
-            palette=palette, alpha=alpha, markers=labelMarkerMap, markerSize=markerSize, lineWidth=2.5, legendMarkerScale=legendMarkerScale, axisFontSize=axisFontSize, legendFontSize=legendFontSize
+            plotThreshold=plotThreshold, maxLabelCount=maxLabelCount, xBounds=xBounds, yBounds=yBounds, seed=seed, includeCriteria=subsetCategory == subset,
+            palette=palette, alpha=alpha, markers=labelMarkerMap, markerSize=markerSize, lineWidth=2.5, legendMarkerScale=legendMarkerScale, axisFontSize=axisFontSize, legendFontSize=legendFontSize, title=""
         )
         if not plotInRow:
             ax.set_title(subset, fontsize=axisFontSize)
@@ -613,9 +755,9 @@ def plotTwoMultiple(topObject, projectionName, celltype1, celltype2,
         if subsetCount < availableSpots:
             ax = fig.add_subplot(gs[dimY - 1, dimX - (availableSpots - subsetCount)])
             ax.axis("off")
-            ax.legend(handles=legendItems, title=topObject.name + " Labels", title_fontsize=axisFontSize, fontsize=legendFontSize, markerscale=legendMarkerScale, loc='upper left', frameon=False)
+            ax.legend(handles=legendItems, title=topObject.identifier + " Labels", title_fontsize=legendFontSize, fontsize=legendFontSize, markerscale=legendMarkerScale, loc='upper left', frameon=False)
         else:
-            fig.legend(legendItems, labels, loc="upper left", bbox_to_anchor=(1.025, 1), title=topObject.name + " Labels",  title_fontsize=axisFontSize,  fontsize=legendFontSize,  markerscale=legendMarkerScale, borderaxespad=0., frameon=True)
+            fig.legend(legendItems, labels, loc="upper left", bbox_to_anchor=(1.0125 if plotInRow else 1.025, 1), title=topObject.identifier + " Labels",  title_fontsize=legendFontSize, fontsize=legendFontSize, markerscale=legendMarkerScale, borderaxespad=0., frameon=True)
 
     # Add text and display/save
     if caption:
@@ -632,15 +774,17 @@ def plotTwoMultiple(topObject, projectionName, celltype1, celltype2,
 
 # Make 2D similarity plot of each gene in a selected list
 def plotMultipleGenes(topObject, projectionName, celltype1, celltype2, geneList,
-                     includeCriteria=None, xBounds=None, yBounds=None, maxLabelCount=None, 
-                     legendMarkerScale=0.5, markerSize=40, axisFontSize=24, legendFontSize=24, titleFontSize=36, title="", outFile=None):
+                     includeCriteria=None, xBounds=None, yBounds=None, maxLabelCount=None, keepFull=[], seed=0,
+                     legendMarkerScale=0.3, markerSize=80, axisFontSize=36, legendFontSize=36, titleFontSize=48, title="", outFile=None):
     # Filter data
     annotations = topObject.annotations if includeCriteria is None else topObject.annotations[includeCriteria]
     projections = topObject.projections[projectionName] if includeCriteria is None else topObject.projections[projectionName].loc[:, includeCriteria]
     geneExpressions = topObject.processed if includeCriteria is None else topObject.processed.loc[:, includeCriteria]
 
     # Undersample cell types based on a count maximum
-    projections, annotations = underSample(projections, annotations, maxLabelCount, seed=seed) if maxLabelCount is not None else (projections, annotations)
+    if maxLabelCount is not None:
+        projections, annotations = TopObject.downsample(projections, annotations, maxLabelCount, seed=seed, keepFull=keepFull)
+        geneExpressions = geneExpressions[annotations.index]
     
     # Ensure genes are in dataset
     validGenes = [gene for gene in geneList if gene in topObject.df.index]
@@ -671,14 +815,15 @@ def plotMultipleGenes(topObject, projectionName, celltype1, celltype2, geneList,
         # Create the 2D plot
         _ = plotTwo(topObject, projectionName, celltype1, celltype2,
                 gene=validGenes[i], ax=axs[i], show=False, xBounds=xBounds, yBounds=yBounds, labels=labels, markers=labelMarkerMap,
-                alternateAnnotations=annotations, alternateProjections=projections, alternateExpressions=geneExpressions, singleColorbar=False, plotMultiple=True)
+                alternateAnnotations=annotations, alternateProjections=projections, alternateExpressions=geneExpressions, singleColorbar=False, plotMultiple=True,
+                legendMarkerScale=legendMarkerScale, markerSize=markerSize, axisFontSize=axisFontSize, legendFontSize=legendFontSize)
     # Place legend where space available
     if geneCount < availableSpots:
         ax = fig.add_subplot(gs[dimY - 1, dimX - (availableSpots - geneCount)])
         ax.axis("off")
-        ax.legend(handles=legendItems, title=topObject.name + " Labels", title_fontsize=axisFontSize, fontsize=legendFontSize, markerscale=legendMarkerScale, loc='upper left', frameon=False)
+        ax.legend(handles=legendItems, title=topObject.identifier + " Labels", title_fontsize=axisFontSize, fontsize=legendFontSize, markerscale=legendMarkerScale, loc='upper left', frameon=False)
     else:
-        fig.legend(legendItems, labels, loc="upper left", bbox_to_anchor=(1.025, 1), title=topObject.name + " Labels",  title_fontsize=axisFontSize,  fontsize=legendFontSize,  markerscale=legendMarkerScale, borderaxespad=0., frameon=True)
+        fig.legend(legendItems, labels, loc="upper left", bbox_to_anchor=(1.025, 1), title=topObject.identifier + " Labels",  title_fontsize=axisFontSize,  fontsize=legendFontSize,  markerscale=legendMarkerScale, borderaxespad=0., frameon=True)
 
     # Add text and display/save
     fig.suptitle(title, fontsize=titleFontSize)
@@ -688,23 +833,28 @@ def plotMultipleGenes(topObject, projectionName, celltype1, celltype2, geneList,
 
     
 # 3D Similarity plot
-def plotThree(projections, axis1, axis2, axis3, names, figureTitle="Similarity Plot", legendTitle="Source Annotations"):
+def plotThree(topObject, projectionName, axis1, axis2, axis3, labels=None, maxLabelCount=None, figureTitle="Similarity Plot", legendTitle="Source Annotations"):
     # fig.add_trace(go.Scatter3d(x=[1, 2, 3], y=[4, 5, 6], z=[7, 8, 9], mode='markers', name='Group A'))
-    nameSet = set(names)
     colorMapping = {}
     i = 0
-    for name in nameSet:
+    labels = labels or topObject.sortedCellTypes
+    projections = topObject.projections[projectionName].loc[:, topObject.annotations.isin(labels)]
+    annotations = topObject.annotations[projections.columns]
+    if maxLabelCount is not None:
+        projections, annotations = TopObject.downsample(projections, annotations, maxLabelCount, keepFull=[], seed=1)
+
+    for name in labels:
         colorMapping[name] = i
         i += 1
         
     fig = go.Figure()
-    for name in nameSet:
-        filteredProjections = projections.loc[:, names == name]
+    for label in labels:
+        filteredProjections = projections.loc[:, annotations == label]
         x = filteredProjections.loc[axis1, :]
         y = filteredProjections.loc[axis2, :]
         z = filteredProjections.loc[axis3, :]
         
-        fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode='markers', marker=dict(size=5, color=colorMapping[name]), name=name, hovertemplate= axis1 + ": %{x:.4f}<br>"+ axis2 +": %{y:.4f}<br>"+ axis3 +": %{z:.4f}<extra></extra>"
+        fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode='markers', marker=dict(size=5, color=colorMapping[name]), name=label, hovertemplate= axis1 + ": %{x:.4f}<br>"+ axis2 +": %{y:.4f}<br>"+ axis3 +": %{z:.4f}<extra></extra>"
         ))
     
     fig.update_layout(
@@ -723,13 +873,13 @@ def plotThree(projections, axis1, axis2, axis3, names, figureTitle="Similarity P
         # legend_title_font=dict(size=16, color="blue"),
         legend=dict(title=legendTitle, x=1, y=1, orientation='v', xanchor='right', yanchor='top')
     )
-
-    fig.add_trace(go.Scatter3d(x=[0.1, 0.1], y=[-0.2, 0.5], z=[0, 0],
-        mode='lines', line=dict(dash='dash', width=5, color='red'), name=axis1 + "=0.1"))
-    fig.add_trace(go.Scatter3d(x=[0, 0], y=[0.1, 0.1], z=[-0.2, 0.5],
-        mode='lines', line=dict(dash='dash', width=5, color='red'), name=axis2 + "=0.1"))
-    fig.add_trace(go.Scatter3d(x=[-0.2, 0.5], y=[0, 0], z=[0.1, 0.1],
-        mode='lines', line=dict(dash='dash', width=5, color='red'), name=axis3 + "=0.1")) 
+    xBounds, yBounds, zBounds = getBounds(projections, axis1, axis2, celltype3=axis3)
+    meshY, meshZ = np.meshgrid(np.linspace(yBounds[0], yBounds[1], 2), np.linspace(zBounds[0], zBounds[1], 2))
+    fig.add_trace(go.Surface(x=np.full_like(meshY, 0.1), y=meshY, z=meshZ, opacity=0.3, colorscale=[[0, "red"], [1, "red"]], showscale=False, name=axis1 + "=0.1"))
+    meshX, meshZ = np.meshgrid(np.linspace(xBounds[0], xBounds[1], 2), np.linspace(zBounds[0], zBounds[1], 2))
+    fig.add_trace(go.Surface(y=np.full_like(meshZ, 0.1), x=meshX, z=meshZ, opacity=0.3, colorscale=[[0, "blue"], [1, "blue"]], showscale=False, name=axis2 + "=0.1"))
+    meshX, meshY = np.meshgrid(np.linspace(xBounds[0], xBounds[1], 2), np.linspace(yBounds[0], yBounds[1], 2))
+    fig.add_trace(go.Surface(z=np.full_like(meshX, 0.1), y=meshY, x=meshX, opacity=0.3, colorscale=[[0, "green"], [1, "green"]], showscale=False, name=axis3 + "=0.1"))
     fig.show()
 
 
@@ -916,24 +1066,60 @@ def plotBasisCorrelationMatrix(topObject, figX=8, figY=8, textSize=8, title="Bas
 
 
 # Display confusion matrix of basis back-prediction results
-def plotBasisTestConfusionMatrix(topObject, figX=8, figY=8, textSize=5, axisFontSize=18, title="Basis Test Confusion Matrix", outFile=None):
+def plotBasisTestConfusionMatrix(topObject, figX=12, figY=12, axisFontSize=30, xRotation=90, showPercent=False, square=False, cbar=False, decimalMode="", labelMode="Decimal", fmt='', title="Basis Test Confusion Matrix", outFile=None):
 
     # Build confusion matrix and set colors according to the normalized rows
-    cm = confusion_matrix(topObject.testResults[1]["True"], topObject.testResults[1]["Top1"])
-    colors = preprocessing.normalize(cm, axis=1)
-    labels = sorted(list(set(topObject.testResults[1]["True"] + topObject.testResults[1]["Top1"])))
+    trueLabels, highScoreLabels = (topObject.testResults[1]["True"], topObject.testResults[1]["Top1"])
+    cm = confusion_matrix(trueLabels, highScoreLabels)
+    cmDecimal = confusion_matrix(trueLabels, highScoreLabels, normalize="true")
+    xLabels = sorted(list(set(trueLabels + highScoreLabels)))
+    yLabels = xLabels.copy()
+    if "Unspecified" in yLabels:
+        yLabels.remove("Unspecified")
+        cm, cmDecimal = (cm[:-1, :], cmDecimal[:-1, :])
+    if "Unspecified" in xLabels and topObject.testResults[0]["Unspecified"] / topObject.testResults[0]["Total test count"] < 0.01:
+        xLabels.remove("Unspecified")
+        cm, cmDecimal = (cm[:, :-1], cmDecimal[:, :-1])        
+
+    # colors = preprocessing.normalize(cm, axis=1) if colorNormal else cm #preprocessing.normalize(cm, axis=1)
+
+    if decimalMode:
+        labels = cmDecimal
+        if decimalMode == "NoLead":
+            labels = np.char.replace(np.around(labels, 2).astype(str), '0.', '.')
+        elif decimalMode == "Clean":
+            labels = np.around(labels, 2).astype(str)
+            colCount, rowCount = labels.shape
+            for i in range(colCount):
+                for j in range(rowCount):
+                    label = labels[i, j]
+                    labels[i, j] = '0' if label == '0.0' else label
+    elif showPercent:
+        labels = cmDecimal
+        # colors = cmDecimal
+        fmt = '.0%'  # Normal percent
+        # cm = np.round(cm * 100, decimals=0).astype(int) if showPercent else cm  # Symbol-less percent
+    else:
+        labels = cm
+
+    # Set colors
+    colors = cmDecimal if labelMode == "Decimal" else preprocessing.normalize(cm, axis=1) if labelMode == "Normal" else cm
+
+    # fmt = 'd'  # Integer
+    # fmt = '.2f'  # Decimal
+    # fmt = ''  # As is
 
     # Plot the result
     plt.subplots(1, 1, figsize=(figX, figY))
-    sns.heatmap(colors, annot=cm, fmt='d', cmap='Blues', cbar=False, xticklabels=labels, yticklabels=labels, annot_kws={"size": axisFontSize // 1.1})
-    plt.xticks(fontsize=axisFontSize // 1.2, rotation=90)
+    sns.heatmap(colors, annot=labels, fmt=fmt, cmap='Blues', cbar=cbar, square=square, cbar_kws={"shrink": 0.6} if square else None, xticklabels=xLabels, yticklabels=yLabels, annot_kws={"size": axisFontSize // 1.1})
+    plt.xticks(fontsize=axisFontSize // 1.2, rotation=xRotation)
     plt.yticks(fontsize=axisFontSize // 1.2, rotation=0)
-    plt.xlabel('Highest Projection Score', fontsize=axisFontSize)
-    plt.ylabel('Predicted Label', fontsize=axisFontSize)
+    plt.xlabel('Reclassified Label', fontsize=axisFontSize)
+    plt.ylabel('Original Label', fontsize=axisFontSize)
     plt.title(title, fontsize=axisFontSize)
     plt.tight_layout()
     if outFile is not None:
-        plt.savefig(outFile)
+        plt.savefig(outFile, bbox_inches='tight', dpi=300)
     plt.show()
 
 
@@ -970,7 +1156,7 @@ def plotPredictivity(topObject, label, basis=None, showHigh=10, labelOnly=True, 
     ax.legend(fontsize=14)
     ax.grid(True)
     if outFile is not None:
-        plt.savefig(outFile)
+        plt.savefig(outFile, bbox_inches='tight', dpi=300)
     plt.show()
 
 
@@ -978,8 +1164,9 @@ def plotPredictivity(topObject, label, basis=None, showHigh=10, labelOnly=True, 
 def geneViolinPlot(topObject, gene, outFile=None, figX=10, figY=4, title=""):
     data = {}
     labels = topObject.sortedCellTypes
+    df = topObject.processed if topObject.processed is not None else topObject.df
     for celltype in labels:
-        data[celltype] = topObject.processed.loc[gene, topObject.annotations == celltype]
+        data[celltype] = df.loc[gene, topObject.annotations == celltype]
     
     fig, ax = plt.subplots(1, 1, figsize=(figX, figY))
     violinResults = sns.violinplot(pd.DataFrame(data), inner="quartile")
@@ -987,5 +1174,102 @@ def geneViolinPlot(topObject, gene, outFile=None, figX=10, figY=4, title=""):
         title = topObject.name + " " + gene + " Normalized Expression"
     plt.title(title)
     if outFile is not None:
+        plt.savefig(outFile, bbox_inches='tight', dpi=300)
+    plt.show()
+
+
+# Plot histogram of a cell state's projections onto a specific basis cell state
+def cellCellProjectionHistogram(topObject, projectionName, testCellType, basisCellType, bins=30, density=True, stacked=True, cumulative=True, outFile=None):
+    plt.hist(topObject.projections[projectionName].loc[basisCellType, :][topObject.annotations == testCellType], bins=bins, density=density, stacked=stacked, cumulative=cumulative)
+    if outFile is not None:
+        plt.savefig(outFile)
+
+
+# Display perturbation matrix of basis against itself
+def plotSpaceMatrix(dimensionsMap, figX=12, figY=12, axisFontSize=16, title="Perturbations Matrix", outFile=None):
+
+    if type(dimensionsMap) is dict:
+        dimensionsMapFrame = pd.DataFrame.from_dict(dimensionsMap, orient="index")
+    labels = sorted(list(dimensionsMap.keys()))
+    dimensionsMapFrame = dimensionsMapFrame.reindex(index=labels, columns=labels)
+
+    # Plot the result
+    plt.subplots(1, 1, figsize=(figX, figY))
+    ax = sns.heatmap(dimensionsMapFrame, annot=True, fmt=".2f", cmap='afmhot', xticklabels=labels, yticklabels=labels,
+            annot_kws={"size": axisFontSize // 1.1}, cbar=True)
+    plt.xticks(fontsize=axisFontSize // 1.2, rotation=90)
+    plt.yticks(fontsize=axisFontSize // 1.2, rotation=0)
+    plt.xlabel("Perturbation Direction", fontsize=axisFontSize)
+    plt.ylabel("Original Label", fontsize=axisFontSize)
+    ax.figure.axes[-1].tick_params(labelsize=axisFontSize // 1.2)
+    plt.title(title, fontsize=axisFontSize)
+    plt.tight_layout()
+    if outFile is not None:
+        plt.savefig(outFile, bbox_inches='tight', dpi=300)
+    plt.show()
+
+    
+# Display confusion matrix of basis back-prediction results
+def plotProjectionResultsMatrix(topObject, projectionName, figX=8, figY=8, textSize=5, axisFontSize=18, labels=None, square=False, cbar=False, title="Mean Projection Scores", outFile=None):
+
+    projection = topObject.projections[projectionName]
+    projectionMap = {}
+    labels = labels or topObject.sortedCellTypes
+    for label in labels:
+        currentProjection = projection.loc[:, topObject.annotations == label]
+        projectionMap[label] = list(currentProjection.mean(axis=1))
+
+    projectionLabels = list(projection.index)
+    projectionsFrame = pd.DataFrame(projectionMap, index=projectionLabels).T
+    colors = projectionsFrame #preprocessing.normalize(projectionsFrame, axis=1)
+    
+    # Plot the result
+    plt.subplots(1, 1, figsize=(figX, figY))
+    sns.heatmap(colors, annot=projectionsFrame, fmt='.2f', cmap='plasma', cbar=cbar, square=square, cbar_kws={"shrink": 0.6} if square else None, xticklabels=projectionLabels, yticklabels=labels, annot_kws={"size": axisFontSize // 1.1})
+    plt.xticks(fontsize=axisFontSize // 1.2, rotation=90)
+    plt.yticks(fontsize=axisFontSize // 1.2, rotation=0)
+    plt.xlabel('Projected Annotation', fontsize=axisFontSize)
+    plt.ylabel('Original Annotation', fontsize=axisFontSize)
+    plt.title(title, fontsize=axisFontSize)
+    plt.tight_layout()
+    if outFile is not None:
+        plt.savefig(outFile, bbox_inches='tight', dpi=300)
+    plt.show()
+
+
+# Plot the significance metrics for cell states' projections onto basis cell states based on t-tests over test cells
+def getOverThresholdSignificanceMatrix(topObject, projectionName, threshold=0.1, test="pvalue", figX=8, figY=8, textSize=5, axisFontSize=18, labels=None, square=False, cbar=False, title="Over Threshold Statistics", includeCriteria=None, outFile=None):
+    
+    projection = topObject.projections[projectionName]
+    projection = projection if includeCriteria is None else projection.loc[:, includeCriteria]
+    labels = labels or topObject.sortedCellTypes
+    projectionMap = {label: {} for label in labels}
+
+    for label in labels:
+        labelProjection = projection.loc[:, topObject.annotations == label]
+
+        for target in labelProjection.index:
+            labelTargetProjection = labelProjection.loc[target, :]
+            testResult = ttest_1samp(labelTargetProjection, threshold, alternative="greater")
+            if test == "pvalue":
+                projectionMap[label][target] = testResult.pvalue
+            elif test == "statistic":
+                projectionMap[label][target] = testResult.statistic
+
+    projectionLabels = list(projection.index)
+    projectionsFrame = pd.DataFrame(projectionMap, index=projectionLabels).T
+    colors = preprocessing.normalize(projectionsFrame, axis=1) if test == "statistic" else projectionsFrame
+    
+    # Plot the result
+    plt.subplots(1, 1, figsize=(figX, figY))
+    sns.heatmap(colors, annot=projectionsFrame, fmt='.2f', cmap='plasma', cbar=cbar, square=square, cbar_kws={"shrink": 0.6} if square else None, xticklabels=projectionLabels, yticklabels=labels, annot_kws={"size": axisFontSize // 1.1})
+    plt.xticks(fontsize=axisFontSize // 1.2, rotation=90)
+    plt.yticks(fontsize=axisFontSize // 1.2, rotation=0)
+    plt.xlabel('Projected Annotation', fontsize=axisFontSize)
+    plt.ylabel('Original Annotation', fontsize=axisFontSize)
+    plt.title(title, fontsize=axisFontSize)
+    plt.tight_layout()
+    if outFile is not None:
         plt.savefig(outFile)
     plt.show()
+

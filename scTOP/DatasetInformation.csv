@@ -7,7 +7,7 @@ Bibek,annotation_update,"[AT1, AT2, Krt8 high AT2, Activated AT2, Ciliated, Prol
 Burgess,new_cluster,"[CASP4+ cells, Differentiating iAT2/iAT1, Early iAT1s, FGL1 high iAT2s, iAT2s, Late iAT1s]",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Burgess.h5ad,,human,False,False,,
 Choi,celltype_4,"[AT1, AT2, Primed, Intermediate, Cycling AT2]",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Choi.h5ad,treat,mouse,True,True,,
 Habermann,celltype,"[AT1, AT2, KRT5-/KRT17+, Proliferating Epithelial Cells, Transitional AT2, SCGB3A2+, SCGB3A2+ SCGB1A1+, Basal]",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Habermann.h5ad,,human,False,False,,
-Kaminski2020,Manuscript_Identity,"['Aberrant_Basaloid', 'ATII', 'ATI', 'Ciliated', 'Basal', 'Club', 'Goblet']",,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Kaminski2020.h5ad,,human,,,,
+Adams2020,Manuscript_Identity,"['Aberrant_Basaloid', 'ATII', 'ATI', 'Ciliated', 'Basal', 'Club', 'Goblet']",,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Kaminski2020.h5ad,,human,,,,
 Kaminski2025,renamedFinal,"['Ciliated', 'ATII', 'ATI', 'Basal', 'Club', 'Goblet', 'Aberrant_Basaloid']",,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Kaminski2025.h5ad,,human,,,,
 Kaminski2025AllNucleiInVivoEpithelial,renamedFinal,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Kaminski2025AllNucleiInVivoEpithelial.h5ad,,human,,,,
 Kaminski2025AllNucleiInVivoStromal,renamedFinal,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Kaminski2025AllNucleiInVivoStromal.h5ad,,human,,,,
@@ -33,6 +33,21 @@ Vannan,celltype,"[AT2, Multiciliated, Basal, AT1, Transitional AT2, RASC, Goblet
 VannanNiche,celltype,"[AT2, Multiciliated, Basal, AT1, Transitional AT2, RASC, Goblet, Secretory, KRT5-/KRT17+, Proliferating AT2, Proliferating Airway, PNEC]",[],/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/VannanNiche.h5ad,,human,False,False,,
 Zacharias,celltype,[],,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Zacharias.h5ad,DataSet,mouse,,,,"Mouse alveolar  epithelium, PRC2 deletion"
 PPFE,Celltype,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/PPFE.h5ad,,Human,,,,"Paper, authors not yet provided"
-,,,,,,,,,,
 LungMAPEpithelial,celltype_level3,"['AT1', 'AT2', 'Secretory', 'Basal', 'Ciliated', 'Goblet']",,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/LungMAPEpithelial.h5ad,,Human,,,,Epithelial-only reference
+MontoroTurnover,celltype,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/MontoroTurnover.h5ad,timepoint,Mouse,,,,Differentiation at homeostasis
+LaurenTGFBATAC,sample,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/LaurenTGFBATAC.h5ad,,human,,,,scATACseq data for KRT17 reporter paper
+KonkimallaBHT,celltype,"['AT1', 'AT2', 'Proliferating AT2', 'Differentiating AT2', 'ABI', 'Ciliated', 'Secretory']",,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Konkimalla_BHT.h5ad,,Mouse,,,,Day 6 mice injured with BHT
 ,,,,,,,,,,
+KonkimallaAT1Ablation,cell_type,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Konkimalla_AT1_Ablation.h5ad,condition,Mouse,,,,
+KonkimallaMDM2,cell_type,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Konkimalla_MDM2.h5ad,,Mouse,,,,
+,,,,,,,,,,
+NatriSmall,annotation_level_1,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/NatriSmall.h5ad,,human,,,,"Multiple ILDs, filtered to epithelial and 15000 max cells per type"
+Natri,manual_annotation_1,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Natri.h5ad,,human,,,,"Multiple ILDs, filtered to epithelial"
+Dietrich,celltype,"['MCC', 'AT2', 'AT1', 'Goblet', 'Transitional AT2', 'Aberrant basaloid', 'Club']",,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/voltron_epithelial.h5ad,,Human,,True,,Human atlas
+SankarMUC5B,celltype,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/SankarMUC5B.h5ad,orig.ident,Human,,,,In vitro primary AT2 cells perturbed with MUC5B
+Tang,Sample,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Tang.h5ad,Sample,Mouse,,,,
+,,,,,,,,,,
+TERT1,orig.ident,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/TERT1.h5ad,,,,,,
+TERT2,orig.ident,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/TERT2.h5ad,,,,,,
+Jonathan_KI_Coculture,orig.ident,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Jonathan_KI_Coculture.h5ad,,,,,,
+NatriMesenchymal,manual_annotation_1,,,/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/NatriMesenchymal.h5ad,,Human,,,,
