@@ -14,16 +14,16 @@ I have set up a conda environment with all the libraries you should need to run 
 1. Click File -> New -> Terminal
 2. In the terminal, run `module unload python3`
 3. Run `module load miniconda`
-4. Run `mamba env create -f /restricted/projectnb/crem-trainees/Kotton_Lab/Vilker_Helper_Files/scTOP/scTOP.yml`
-5. Run `python -m ipykernel install --user --name=scTOP`
+4. Run `mamba env create -f /restricted/projectnb/crem-trainees/Kotton_Lab/Vilker_Helper_Files/scTOP/TopObject.yml`
+5. Run `python -m ipykernel install --user --name=TopObject`
 6. Click File -> New -> Notebook
-7. Click Select Kernel in the top right and select scTOP
-8. Go to the first vignette in the scTOP folder
+7. Click Select Kernel in the top right and select TopObject
+8. Go to the first vignette in the scTOP/vignettes folder
 9. Copy and paste the contents of the first block (with # Load libraries in Line 1) into the top block of your file
 10. Press Control + Enter to run the block
 
 ## Core Functionality
-To simplify usage of scTOP, I have created the TopObject class to store common functions and variables
+To simplify usage of scTOP and AnnData, I have created the TopObject class to store common functions and variables
 1. To initialize, run `[objectName] = TopObject.TopObject([DatasetName])`, where DatasetName is a name in a file in DatasetInformation.csv. You can pass in `True` for skipProcess if using a dataset as a basis only, as well as lists of cell types for `keep` or `exclude` to filter the dataset. `True` can also be passed in for either `keep` or `exclude` to use a preset list of cell types.
 2. To set a basis, run `[objectName].setBasis()`. You can then get the basis any time with [objectName].basis
 3. To project onto a basis, run `[objectName].project(basis, ["basisDescription"])`. The projection can then be found at `[objectName].projection["basisDescription"]`
@@ -32,7 +32,7 @@ To simplify usage of scTOP, I have created the TopObject class to store common f
 6. To add a new dataset to a summary file, after copying DatasetInformation.csv or making your own version of it and creating an AnnData object for your dataset, run `TopObject.dynamicAddDataset(summaryFile=["summaryFileName"])` and input information according to the prompts, clicking Enter to skip a prompt and Q to quit and revert changes 
 
 ## Plotting Functions
-The following functions are useful for generating figures flexibly. There are many optional parameters you may wish to use; check out PlottingFunctions.md or the actual functions at SimilarityHelper.py and TopObject.py to see all the options available to you.
+The following functions in SimilarityHelper.py (far from complete list) are useful for generating figures flexibly. There are many optional parameters you may wish to use; check out PlottingFunctions.md or the actual functions at SimilarityHelper.py and TopObject.py to see all the options available to you.
 1. To view a dataset's projection against two cell types in the basis, run `SimilarityHelper.plotTwo([objectName].projections["[basisDescription]"], [objectName].annotations, [basisCelltype1], [basisCelltype2])`. Options include to view gene expressions or supervised or unsupervised contours.
 2. To view how a projection changes over time, run `SimilarityHelper.plotTwoMultiple([objectName], [objectName].projections["[basisDescription]"], [basisCelltype1], [basisCelltype2])`. The same options as for plotTwo apply.
 
