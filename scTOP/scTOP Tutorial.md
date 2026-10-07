@@ -26,7 +26,7 @@ I have set up a conda environment with all the libraries you should need to run 
 To simplify usage of scTOP, I have created the TopObject class to store common functions and variables
 1. To initialize, run `[objectName] = TopObject.TopObject([DatasetName])`, where DatasetName is a name in a file in DatasetInformation.csv. You can pass in `True` for skipProcess if using a dataset as a basis only, as well as lists of cell types for `keep` or `exclude` to filter the dataset. `True` can also be passed in for either `keep` or `exclude` to use a preset list of cell types.
 2. To set a basis, run `[objectName].setBasis()`. You can then get the basis any time with [objectName].basis
-3. To project onto a basis, run `[objectName].projectOntoBasis(basis, ["basisDescription"])`. The projection can then be found at `[objectName].projection["basisDescription"]`
+3. To project onto a basis, run `[objectName].project(basis, ["basisDescription"])`. The projection can then be found at `[objectName].projection["basisDescription"]`
 4. To combine bases, run `[objectName].combineBases(otherBasis, name=["basisDescription"])`. Inlude firstKeep or secondKeep as parameters if you want to choose specific cell types in either basis to include. The combined basis can then be found at `[objectName].combinedBases["basisDescription"]`
 5. To test a basis, run `[objectName].testBasis()`
 6. To add a new dataset to a summary file, after copying DatasetInformation.csv or making your own version of it and creating an AnnData object for your dataset, run `TopObject.dynamicAddDataset(summaryFile=["summaryFileName"])` and input information according to the prompts, clicking Enter to skip a prompt and Q to quit and revert changes 
@@ -37,5 +37,6 @@ The following functions are useful for generating figures flexibly. There are ma
 2. To view how a projection changes over time, run `SimilarityHelper.plotTwoMultiple([objectName], [objectName].projections["[basisDescription]"], [basisCelltype1], [basisCelltype2])`. The same options as for plotTwo apply.
 
 ## Creating AnnData Objects from Seurat
-1. Copy the file CrossPlatformConversions/seuratAnnDataConversions.R (look at ConversionVignettes.Rmd for usage examples)
-2. Run `convertSeuratToAnnData`, passing in "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/.conda/envs/scTOP" for condaEnvironment, the file extension for type, the seurat object to seuratObj or the file name to inputFile, the name of the AnnData file being written (end with ".h5ad") to outputFile, a layer name to mainLayer if you want to select one other than counts, and an assay name to assay if you want to select one other than RNA.
+1. Download the repository Vilker_Helper_Files/CrossPlatformConversions
+2. Copy the file CrossPlatformConversions/seuratAnnDataConversions.R (look at ConversionVignettes.Rmd for usage examples)
+3. Run `convertSeuratToAnnData`, passing in "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/.conda/envs/scTOP" for condaEnvironment, the file extension for type, the seurat object to seuratObj or the file name to inputFile, the name of the AnnData file being written (end with ".h5ad") to outputFile, a layer name to mainLayer if you want to select one other than counts, and an assay name to assay if you want to select one other than RNA.

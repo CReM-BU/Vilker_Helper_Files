@@ -1,11 +1,10 @@
 # File containing TopObject class used for loading AnnData objects and performing core scTOP operations
-# Author: Eitan Vilker (with some functions written by Maria Yampolskaya)
+# Author: Eitan Vilker (with some functions written or inspired by Maria Yampolskaya and Huan Souza)
 
 import numpy as np
 import pandas as pd
 import sctop as top
 import sys
-sys.path.append('/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Vilker_Helper_Files/scTOP')
 import scanpy as sc
 import anndata as ad
 from pybiomart import Server
@@ -24,10 +23,11 @@ import inspect
 from copy import deepcopy
 
 
+# Object-oriented structure for containing AnnData objects, scTOP processed data and projections, relevant functions, and integration with visualization and statistical tools
 class TopObject:
-    def __init__(self, identifier, annObject=None, cellTypeColumn=None, manualInit=False, useAverage=False, skipProcess=False, keep=None, exclude=None, maxSamples=None, keepFull=[], dataset="/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Vilker_Helper_Files/scTOP/DatasetInformation.csv"):
+    def __init__(self, identifier, annObject=None, cellTypeColumn=None, manualInit=False, useAverage=False, skipProcess=False, keep=None, exclude=None, maxSamples=None, keepFull=[], datasetCollection="/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/DatasetCollection.csv"):
         self.identifier = identifier
-        self.dataset = dataset
+        self.datasetCollection = datasetCollection
         self.processed = None
 
         if annObject is not None:
@@ -37,9 +37,9 @@ class TopObject:
                 self.anndata, self.cellTypeColumn = (annObject, cellTypeColumn)
                 self.toKeep = self.toExclude = self.filePath = self.timeColumn = self.species = self.duplicates = self.raw = self.layer = self.comments = None
                 self.setup(useAverage=useAverage, skipProcess=skipProcess, keep=keep, exclude=exclude, maxSamples=maxSamples, keepFull=keepFull)
-        elif self.dataset is not None:
-            datasetInfo = pd.read_csv(self.dataset, index_col="Name", keep_default_na=False).loc[self.identifier, :]
-            self.cellTypeColumn, self.toKeep, self.toExclude, self.filePath, self.timeColumn, self.species, self.duplicates, self.raw, self.layer, self.comments = datasetInfo
+        elif self.datasetCollection is not None:
+            dataset = pd.read_csv(self.datasetCollection, index_col="Name", keep_default_na=False).loc[self.identifier, :]
+            self.cellTypeColumn, self.toKeep, self.toExclude, self.filePath, self.timeColumn, self.species, self.duplicates, self.raw, self.layer, self.comments = dataset
             self.cellTypeColumn = cellTypeColumn or self.cellTypeColumn
             self.raw = getTruthValue(self.raw)
             self.duplicates = getTruthValue(self.duplicates)
@@ -167,12 +167,9 @@ class TopObject:
 
     # Set TopObject to include or exclude cells with certain labels. Not for gene filtering! Return True if filtering occurred
     def filter(self, keep=None, exclude=None, condition=None, maxSamples=None, keepFull=[], conditionList=None,
-               skipProcess=True, useAverage=False, seed=0, annotations=None, df=None):
+               skipProcess=True, useAverage=False, seed=0, annotations=None, df=None, inplace=True):
         
         annotations = self.annotations if annotations is None else annotations
-        if df is not None:
-            returnDF = True
-        df = self.df if not returnDF else df
         filtered = False
         
         # Begin filtering if at least one condition was selected
@@ -180,7 +177,6 @@ class TopObject:
         excludeTruthValue = False if type(exclude) is bool and not getTruthValue(self.toExclude) else getTruthValue(exclude)
 
         if keepTruthValue or excludeTruthValue or condition is not None or maxSamples is not None or conditionList is not None:
-            print("Filtering TopObject...")
             filtered = True
 
             # Select individual conditions
@@ -197,14 +193,15 @@ class TopObject:
                 combinedCondition = conditionList[0]
                 for i in range(1, len(conditionList)):
                     combinedCondition = np.logical_and(combinedCondition, conditionList[i])
-                df, annotations = (df.loc[:, combinedCondition], annotations[combinedCondition])
+                annotations = annotations[combinedCondition]
 
             # Undersample some cell types based on a count maximum. Must be performed after other conditions
             if maxSamples is not None:
-                df, annotations = downsample(df, annotations, maxCount=maxSamples, keepFull=keepFull, seed=seed)
+                annotations = downsample(annotations, maxSamples, keepFull=keepFull, seed=seed)
 
-        if returnDF:
-            return df, annotations
+        if not (inplace and df is None):
+            df = self.df if df is None else df
+            return df.loc[:, annotations.index], annotations
         if not filtered:
             return False
 
@@ -220,8 +217,8 @@ class TopObject:
     # First scTOP function, ranks and normalizes source 
     def process(self, useAverage=False, chunks=500, df=None, annotations=None, maxSamples=None, keepFull=[], condition=None, setProcessed=True, seed=1):
         df = self.df if df is None else df
-        df, annotations = self.filter(df=df, annotations=annotations, condition=condition, maxSamples=maxSamples, keepFull=keepFull, seed=seed)
-
+        df, annotations = self.filter(annotations=annotations, df=df, condition=condition, maxSamples=maxSamples, keepFull=keepFull, seed=seed, inplace=False)
+        
         print("Processing scTOP data...")
         processed = top.process(df, average=useAverage, chunk_size=chunks)
         if setProcessed:
@@ -275,9 +272,9 @@ class TopObject:
         holdouts = 0.2 if type(holdouts) is bool and holdouts else holdouts
 
         # Undersample some cell types based on a count maximum
-        if maxSamples is not None:
-            maxSamples = maxSamples if holdouts is None else int(maxSamples / (1 - holdouts)) # Adjust based on removed holdouts so amount removed is as specified
-            cellData, annotations = self.filter(df=cellData, annotations=annotations, condition=includeCriteria, maxSamples=maxSamples, seed=seed)
+        # if maxSamples is not None:
+        maxSamples = maxSamples if holdouts is None or maxSamples is None else int(maxSamples / (1 - holdouts)) # Adjust based on removed holdouts so amount removed is as specified
+        cellData, annotations = self.filter(df=cellData, annotations=annotations, condition=includeCriteria, maxSamples=maxSamples, seed=seed, inplace=False)
             # rus = RandomUnderSampler(sampling_strategy=getLabelCountsMap(annotations, maxCount=maxSamples), random_state=seed)
             # samples, annotations = rus.fit_resample(np.array(annotations.index).reshape(-1, 1), annotations)
             # cellData = cellData.loc[:, [sample[0] for sample in samples]]
@@ -331,7 +328,7 @@ class TopObject:
         return basis
 
     # Add the desired columns of one basis to another
-    def combineBases(self, otherBasis, firstKeep=None, firstExclude=None, secondKeep=None, secondExclude=None, alternateFirstBasis=None, name="Combined"):
+    def combineBases(self, otherBasis, firstKeep=None, firstExclude=None, secondKeep=None, secondExclude=None, alternateFirstBasis=None, name="Combined", labelOrigin=False):
         print("Combining bases...")
         
         # Get and set basis for this object as needed
@@ -348,6 +345,10 @@ class TopObject:
         basis1 = basis1[[col for col in basis1.columns if col not in firstExclude]] if firstExclude is not None else basis1
         basis2 = basis2[secondKeep] if secondKeep is not None else basis2
         basis2 = basis2[[col for col in basis1.columns if col not in secondExclude]] if secondExclude is not None else basis2
+
+        if not set(basis1.columns).isdisjoint(set(basis2.columns)) or labelOrigin:
+            basis1.columns = [self.identifier + " " + col for col in basis1.columns]
+            basis2.columns = [otherBasis.identifier + " " + col if isinstance(otherBasis, TopObject) else col for col in basis2.columns]
 
         # Combine bases
         combinedBasis = pd.merge(basis1, basis2, on=basis1.index.name, how="inner")
@@ -506,7 +507,7 @@ class TopObject:
         # Get train and test data stratified to have same proportion of each cell type
         for trial in trials: # For each seed
             print("Trial: " + str(trial))
-            trainX, trainY = downsample(self.df, self.annotations, None, proportion=trainProportion, seed=trial)
+            trainX, trainY = downsample(self.annotations, None, df=self.df, proportion=trainProportion, seed=trial)
 
             trainXProcessed = top.process(trainX, chunk_size=500)
             trainXProcessed /= np.linalg.norm(trainXProcessed, axis=0, keepdims=True)
@@ -556,7 +557,7 @@ class TopObject:
         # If we already have processed data, filter as normal
         else:
             processed = self.processed if processed is None else processed
-            processed, annotations = self.filter(df=processed, annotations=annotations, condition=includeCriteria, maxSamples=maxSamples, seed=seed)
+            processed, annotations = self.filter(df=processed, annotations=annotations, condition=includeCriteria, maxSamples=maxSamples, seed=seed, inplace=False)
 
         # Use ANOVA to get the genes that maximize reclassification
         genes = processed.index
@@ -651,14 +652,14 @@ def getLabelCountsMap(annotations, maxCount=None, proportion=None, keepFull=[]):
 
 
 # Undersample cell types based on a count maximum
-def downsample(df, annotations, maxCount, proportion=None, keepFull=[], seed=1):
+def downsample(annotations, maxCount, df=None, proportion=None, keepFull=[], seed=1):
     labelCountsMap = getLabelCountsMap(annotations, maxCount=maxCount, keepFull=keepFull, proportion=proportion)
     samples = []
     for label in labelCountsMap.keys():
         rng = np.random.default_rng(seed) # Set here so rng is not order-dependent
         currentAnno = annotations[annotations == label]
         samples += list(currentAnno.index[rng.choice(len(currentAnno), size=labelCountsMap[label], replace=False)])
-    return df.loc[:, samples], annotations[samples]
+    return annotations[samples] if df is None else (df.loc[:, samples], annotations[samples])
 
 
 # Add or update an entry to a summary file containing metadata regarding datasets
@@ -776,7 +777,7 @@ def getTruthValue(val):
     return "Other"
 
 
-# Using any dataset with well-defined clusters, set it as a basis
+# Using any dataset with well-defined clusters, set it as a basis (duplicated to work outside TopObjects, and likely redundant with new scTOP code)
 def setBasis(cellData, annotations, holdouts=None, threshold=200, seed=None, getScores=False, usePCA=False, allowedGenes=None, basisName=None):
     print("Setting basis...")
     # Count the number of cells per type
@@ -828,6 +829,7 @@ def setBasis(cellData, annotations, holdouts=None, threshold=200, seed=None, get
     return toReturn
 
 
+# Given the results of testing for best classifying genes, report best genes
 def bestGenesAnalysis(proportionTestMap, proportions, trials):
     # Find proportion with highest average accuracy
     print("Finding best proportions...")
@@ -916,3 +918,151 @@ def getOrthologMapping(basisSpecies, targetSpecies, ensemblMart, ensemblConfig):
         print(f"  Warning: Could not fetch mapping for {targetSpecies}->{basisSpecies}: {e}")
         return pd.Series(dtype=str)
 
+
+## ========================= ##
+## Functions for loading and writing AnnData and basis objects ##
+## ========================= ##
+
+# Function to load a basis given a file location or basis name and summary csv
+def loadBasis(file=None, basisCollection=None, basisName=None, geneIndex="gene", basisKeep=None):
+    if file is None:
+        if basisCollection is None or basisName is None:
+            print("Must enter either a filename or a file containing multiple bases and the name of the basis you want")
+            return None
+        file = pd.read_csv(basisCollection, index_col="Name").loc[basisName, "File"]
+
+    # Handle more complicated h5 case; bases are usually small enough that a csv is fine though
+    if file.endswith("h5"):
+        with h5py.File(file, "r") as f:
+            cellTypes = f["df"]["axis0"][:]
+            var = f["df"]["axis1"][:]
+            X = f["df"]["block0_values"][:]
+
+        basis = pd.DataFrame(X)
+        basis.columns = [col.decode() for col in cellTypes]
+        basis.index = [row.decode() for row in var]
+
+    elif file.endswith("csv"):
+        basis = pd.read_csv(file, index_col=geneIndex)
+    else:
+        print("Unsupported file type")
+        return None
+
+    # Reduce wordiness in basis names
+    newCols = {}
+    for col in basis.columns:
+        idx = col.upper().find("CELL")
+        if idx != -1:
+            newCols[col] = col[:idx - 1]
+    basis = basis.rename(columns=newCols)
+
+    if basisKeep is not None:
+        basis = basis[[colName for colName in basis.columns if colName in basisKeep]]
+    print("Loaded " + basisName + " basis!")
+    return basis
+
+
+# Converts files in raw format (straight from GEO usually) to AnnData. Set geneHeader to None if no header
+def rawToAnnData(countsPath, genesPath, metadataPath, barcodesPath=None,
+                 matrix=False, transposeCounts=True, geneSeparator="\t", metadataSeparator="\t", barcodesSeparator="\t", metadataIndexColumn=None, geneHeader="infer", barcodesHeader="infer", geneColumnIdx=0, skipMetadataRow=None, skipCountsRow=None):
+    # Set counts
+    print("Setting counts...")
+    counts = sc.read_mtx(countsPath) if matrix or countsPath.endswith("mtx") else ad.AnnData(pd.read_csv(countsPath))
+    try:
+        annObject = counts.T if transposeCounts else counts
+    except:
+        print("You may need to set transposeCounts to True")
+        return None
+
+    # Set metadata
+    if metadataPath is not None:
+        try:
+            print("Setting metadata...")
+            metadata = pd.read_csv(metadataPath, sep=metadataSeparator) if skipMetadataRow is None else pd.read_csv(metadataPath, sep=metadataSeparator, skiprows=[skipMetadataRow])
+            metadata.replace(np.nan, '', inplace=True)
+            if barcodesPath is not None:
+                metadata.index = pd.read_csv(barcodesPath, sep=barcodesSeparator, header=barcodesHeader)
+            else:
+                metadata.set_index(metadataIndexColumn or metadata.columns[0], inplace=True)
+            annObject.obs = metadata
+            annObject.obs.index.names = ["index"]
+        except:
+            print("Something went wrong setting metadata!")
+            return annObject
+
+    # Set genes
+    try:
+        print("Setting genes...")
+        genes = pd.read_csv(genesPath, sep=geneSeparator, header=geneHeader)
+        genes.rename(columns={genes.columns[geneColumnIdx]: "name"}, inplace=True)
+        genes.set_index("name", inplace=True)
+        print("Adding genes to AnnData...")
+        annObject.var = genes
+        annObject.var.index.names = ["index"]
+    except:
+        print("Something went wrong setting genes!")
+        return annObject
+
+    print("Done!")
+    return annObject
+
+
+# Write an AnnData object to an h5ad file
+def writeAnnData(annDataObj, outFile, indexReplace=None):
+
+    # Copy and compress data as sparse matrix
+    obj = annDataObj.copy()
+    print("Setting X as csr_matrix...")
+    obj.X = csr_matrix(obj.X)
+
+    # If object has raw data in raw layer, can adjust names here so old formats don't break
+    if obj.raw is not None:
+        print("Setting raw...")
+        if indexReplace is not None:
+            obj._raw._var.rename(columns={indexReplace: 'index'}, inplace=True)
+            obj.raw.var.index.name(columns={indexReplace: 'index'}, inplace=True)
+
+    # Write the object
+    print("Writing h5ad...")
+    obj.write_h5ad(outFile)
+    del obj
+    print("Finished!")
+
+
+# Use run-length encoding and sparse matrix to store processed data as small as possible. Note: Still very inefficient relative to raw data because processing removes 0s
+def writeProcessed(processed, outFile):
+    print("Converting to polars...")
+    polarsProc = pl.from_pandas(processed)
+
+    print("Applying RLE...")
+    rleResults = {}
+    for col in polarsProc.columns:
+        unnested = polarsProc[col].rle().struct.unnest()
+        rleResults[f"{col}_len"] = unnested["len"]
+        rleResults[f"{col}_value"] = unnested["value"]
+
+    print("Padding with 0s...")
+    maxLen = max(s.len() for s in rleResults.values())
+    rlePadded = {name: s.extend_constant(0, maxLen - s.len()) if s.len() < maxLen else s for name, s in rleResults.items()}
+    rleStacked = np.column_stack([rlePadded[name].to_numpy() for name in rlePadded])
+
+    print("Converting to sparse and writing...")
+    mmwrite(outFile, csr_matrix(rleStacked))
+
+
+# Decompress sparse processed data and reverse run-length encoding
+def readProcessed(genes, colNames, fileName):
+    print("Reading matrix and sending to array...")
+    denseMatrix = sc.read_mtx(fileName).X.toarray()
+    colPairs = [[col + "_len", col + "_value"] for col in colNames]
+    colPairs = [key for sublist in colPairs for key in sublist]
+
+    print("")
+    reconstructed = {}
+    for col in colNames:
+        lenCol, valCol = (denseMatrix[:, colPairs.index(f"{col}_len")], denseMatrix[:, colPairs.index(f"{col}_value")])
+        mask = lenCol != 0
+        lens, vals = (lenCol[mask].astype(int), valCol[mask])
+        reconstructed[col] = np.repeat(vals, lens)
+    
+    return pd.DataFrame(reconstructed, index=genes)
