@@ -7,7 +7,7 @@ import sctop as top
 import sys
 import scanpy as sc
 import anndata as ad
-from pybiomart import Server
+# from pybiomart import Server
 import mygene
 from scipy.sparse import csr_matrix
 from sklearn.decomposition import PCA
@@ -21,6 +21,7 @@ from imblearn.under_sampling import RandomUnderSampler
 from tqdm import tqdm
 import inspect
 from copy import deepcopy
+# import polars as pl  # Not in use because outputting processed files is so inefficient
 
 
 # Object-oriented structure for containing AnnData objects, scTOP processed data and projections, relevant functions, and integration with visualization and statistical tools
@@ -571,9 +572,8 @@ class TopObject:
     # Get ortholog genes based on Ensembl mapping to another species
     def getOrthologs(self, mapping=None, inplace=True):
 
-        mapping = pd.read_csv("/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Differentiation/objects/HumanMouseOrthologs.csv") if mapping is None else mapping
-
         # Filter out genes without orthologs and set names side by side
+        mapping = pd.read_csv("../objects/HumanMouseOrthologs.csv") if mapping is None else mapping
         print("Filtering AnnData object for orthologs...")
         validMap = mapping[mapping['test'].isin(self.df.index)]
         orthologAligned = self.anndata[:, validMap['test']].copy()
@@ -859,64 +859,64 @@ def bestGenesAnalysis(proportionTestMap, proportions, trials):
     return genesSelectedFrame, geneProportionFrame.astype(float)
 
 
-# Get EnsemblMart server for finding gene orthologs between species
-def getEnsemblMart(speciesNames=["human", "mouse"]):
-    potentialConfig = {
-        'human':      {'dataset': 'hsapiens_gene_ensembl',  'prefix': 'hsapiens'},
-        'chimpanzee': {'dataset': 'ptroglodytes_gene_ensembl','prefix': 'ptroglodytes'},
-        'gorilla':    {'dataset': 'ggorilla_gene_ensembl',   'prefix': 'ggorilla'},
-        'macaque':    {'dataset': 'mmulatta_gene_ensembl',   'prefix': 'mmulatta'},
-        'marmoset':   {'dataset': 'cjacchus_gene_ensembl',   'prefix': 'cjacchus'},
-        'mouse':      {'dataset': 'mmusculus_gene_ensembl',  'prefix': 'mmusculus'},
-        'opossum':    {'dataset': 'mdomestica_gene_ensembl', 'prefix': 'mdomestica'},
-        'platypus':   {'dataset': 'oanatinus_gene_ensembl',  'prefix': 'oanatinus'}
-    }
-    ensemblConfig = {species: potentialConfig[species] for species in speciesNames}    
-    # server = Server('http://www.ensembl.org', use_cache = False)
-    server = Server(host="http://may2025.archive.ensembl.org/") #https can break and maybe trailing slash
-    ensemblMart = server.marts['ENSEMBL_MART_ENSEMBL']
-    return ensemblMart, ensemblConfig, server
+# # Get EnsemblMart server for finding gene orthologs between species (No longer in use because EnsemblMart collapsed, files directly in system now)
+# def getEnsemblMart(speciesNames=["human", "mouse"]):
+#     potentialConfig = {
+#         'human':      {'dataset': 'hsapiens_gene_ensembl',  'prefix': 'hsapiens'},
+#         'chimpanzee': {'dataset': 'ptroglodytes_gene_ensembl','prefix': 'ptroglodytes'},
+#         'gorilla':    {'dataset': 'ggorilla_gene_ensembl',   'prefix': 'ggorilla'},
+#         'macaque':    {'dataset': 'mmulatta_gene_ensembl',   'prefix': 'mmulatta'},
+#         'marmoset':   {'dataset': 'cjacchus_gene_ensembl',   'prefix': 'cjacchus'},
+#         'mouse':      {'dataset': 'mmusculus_gene_ensembl',  'prefix': 'mmusculus'},
+#         'opossum':    {'dataset': 'mdomestica_gene_ensembl', 'prefix': 'mdomestica'},
+#         'platypus':   {'dataset': 'oanatinus_gene_ensembl',  'prefix': 'oanatinus'}
+#     }
+#     ensemblConfig = {species: potentialConfig[species] for species in speciesNames}    
+#     # server = Server('http://www.ensembl.org', use_cache = False)
+#     server = Server(host="http://may2025.archive.ensembl.org/") #https can break and maybe trailing slash
+#     ensemblMart = server.marts['ENSEMBL_MART_ENSEMBL']
+#     return ensemblMart, ensemblConfig, server
 
 
-# Get ortholog gene mapping between any two species, with the reference first
-def getOrthologMapping(basisSpecies, targetSpecies, ensemblMart, ensemblConfig):
-    """Fetches 1:1 orthologs: Target IDs -> Basis IDs."""
-    if basisSpecies == targetSpecies:
-        return None
+# # Get ortholog gene mapping between any two species, with the reference first (No longer in use because EnsemblMart collapsed, files directly in system now)
+# def getOrthologMapping(basisSpecies, targetSpecies, ensemblMart, ensemblConfig):
+#     """Fetches 1:1 orthologs: Target IDs -> Basis IDs."""
+#     if basisSpecies == targetSpecies:
+#         return None
 
-    if ensemblMart is None or ensemblConfig is None:
-        #ensemblMart, ensemblConfig = 
-        pass
+#     if ensemblMart is None or ensemblConfig is None:
+#         #ensemblMart, ensemblConfig = 
+#         pass
     
-    source_prefix = ensemblConfig[basisSpecies]['prefix']
-    target_dataset_name = ensemblConfig[targetSpecies]['dataset']
-    homolog_attr = f"{source_prefix}_homolog_ensembl_gene"
+#     source_prefix = ensemblConfig[basisSpecies]['prefix']
+#     target_dataset_name = ensemblConfig[targetSpecies]['dataset']
+#     homolog_attr = f"{source_prefix}_homolog_ensembl_gene"
     
-    try:
-        print("Generating mapping...")
-        dataset = ensemblMart.datasets[target_dataset_name]
-        df = dataset.query(attributes=['ensembl_gene_id', homolog_attr], use_attr_names=True)
-        df = df.dropna().drop_duplicates()
-        df = df.drop_duplicates(subset=['ensembl_gene_id'], keep='first')
-        df = df.drop_duplicates(subset=[homolog_attr], keep='first')
-        mapping = df.set_index('ensembl_gene_id')[homolog_attr]
+#     try:
+#         print("Generating mapping...")
+#         dataset = ensemblMart.datasets[target_dataset_name]
+#         df = dataset.query(attributes=['ensembl_gene_id', homolog_attr], use_attr_names=True)
+#         df = df.dropna().drop_duplicates()
+#         df = df.drop_duplicates(subset=['ensembl_gene_id'], keep='first')
+#         df = df.drop_duplicates(subset=[homolog_attr], keep='first')
+#         mapping = df.set_index('ensembl_gene_id')[homolog_attr]
         
-        # Get genes with orthologs to other species in mapping
-        print("Finding orthologs...")
-        mg = mygene.MyGeneInfo()
-        testGenes = mg.querymany(mapping.index, field='symbol', size=1)
-        basisGenes = mg.querymany(mapping.values, field='symbol', size=1)
+#         # Get genes with orthologs to other species in mapping
+#         print("Finding orthologs...")
+#         mg = mygene.MyGeneInfo()
+#         testGenes = mg.querymany(mapping.index, field='symbol', size=1)
+#         basisGenes = mg.querymany(mapping.values, field='symbol', size=1)
 
-        # Get symbols of genes
-        symbolMapping = pd.DataFrame(data={
-            "test": [val['symbol'] if 'symbol' in val.keys() else val['query'] for val in testGenes], 
-            "basis": [val['symbol'] if 'symbol' in val.keys() else val['query'] for val in basisGenes]})
+#         # Get symbols of genes
+#         symbolMapping = pd.DataFrame(data={
+#             "test": [val['symbol'] if 'symbol' in val.keys() else val['query'] for val in testGenes], 
+#             "basis": [val['symbol'] if 'symbol' in val.keys() else val['query'] for val in basisGenes]})
 
-        return symbolMapping
+#         return symbolMapping
 
-    except Exception as e:
-        print(f"  Warning: Could not fetch mapping for {targetSpecies}->{basisSpecies}: {e}")
-        return pd.Series(dtype=str)
+#     except Exception as e:
+#         print(f"  Warning: Could not fetch mapping for {targetSpecies}->{basisSpecies}: {e}")
+#         return pd.Series(dtype=str)
 
 
 ## ========================= ##
@@ -1029,40 +1029,40 @@ def writeAnnData(annDataObj, outFile, indexReplace=None):
     print("Finished!")
 
 
-# Use run-length encoding and sparse matrix to store processed data as small as possible. Note: Still very inefficient relative to raw data because processing removes 0s
-def writeProcessed(processed, outFile):
-    print("Converting to polars...")
-    polarsProc = pl.from_pandas(processed)
+# # Use run-length encoding and sparse matrix to store processed data as small as possible. Note: Still very inefficient relative to raw data because processing removes 0s
+# def writeProcessed(processed, outFile):
+#     print("Converting to polars...")
+#     polarsProc = pl.from_pandas(processed)
 
-    print("Applying RLE...")
-    rleResults = {}
-    for col in polarsProc.columns:
-        unnested = polarsProc[col].rle().struct.unnest()
-        rleResults[f"{col}_len"] = unnested["len"]
-        rleResults[f"{col}_value"] = unnested["value"]
+#     print("Applying RLE...")
+#     rleResults = {}
+#     for col in polarsProc.columns:
+#         unnested = polarsProc[col].rle().struct.unnest()
+#         rleResults[f"{col}_len"] = unnested["len"]
+#         rleResults[f"{col}_value"] = unnested["value"]
 
-    print("Padding with 0s...")
-    maxLen = max(s.len() for s in rleResults.values())
-    rlePadded = {name: s.extend_constant(0, maxLen - s.len()) if s.len() < maxLen else s for name, s in rleResults.items()}
-    rleStacked = np.column_stack([rlePadded[name].to_numpy() for name in rlePadded])
+#     print("Padding with 0s...")
+#     maxLen = max(s.len() for s in rleResults.values())
+#     rlePadded = {name: s.extend_constant(0, maxLen - s.len()) if s.len() < maxLen else s for name, s in rleResults.items()}
+#     rleStacked = np.column_stack([rlePadded[name].to_numpy() for name in rlePadded])
 
-    print("Converting to sparse and writing...")
-    mmwrite(outFile, csr_matrix(rleStacked))
+#     print("Converting to sparse and writing...")
+#     mmwrite(outFile, csr_matrix(rleStacked))
 
 
-# Decompress sparse processed data and reverse run-length encoding
-def readProcessed(genes, colNames, fileName):
-    print("Reading matrix and sending to array...")
-    denseMatrix = sc.read_mtx(fileName).X.toarray()
-    colPairs = [[col + "_len", col + "_value"] for col in colNames]
-    colPairs = [key for sublist in colPairs for key in sublist]
+# # Decompress sparse processed data and reverse run-length encoding
+# def readProcessed(genes, colNames, fileName):
+#     print("Reading matrix and sending to array...")
+#     denseMatrix = sc.read_mtx(fileName).X.toarray()
+#     colPairs = [[col + "_len", col + "_value"] for col in colNames]
+#     colPairs = [key for sublist in colPairs for key in sublist]
 
-    print("")
-    reconstructed = {}
-    for col in colNames:
-        lenCol, valCol = (denseMatrix[:, colPairs.index(f"{col}_len")], denseMatrix[:, colPairs.index(f"{col}_value")])
-        mask = lenCol != 0
-        lens, vals = (lenCol[mask].astype(int), valCol[mask])
-        reconstructed[col] = np.repeat(vals, lens)
+#     print("")
+#     reconstructed = {}
+#     for col in colNames:
+#         lenCol, valCol = (denseMatrix[:, colPairs.index(f"{col}_len")], denseMatrix[:, colPairs.index(f"{col}_value")])
+#         mask = lenCol != 0
+#         lens, vals = (lenCol[mask].astype(int), valCol[mask])
+#         reconstructed[col] = np.repeat(vals, lens)
     
-    return pd.DataFrame(reconstructed, index=genes)
+#     return pd.DataFrame(reconstructed, index=genes)

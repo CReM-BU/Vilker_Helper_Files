@@ -21,7 +21,6 @@ import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import confusion_matrix
 from sklearn import preprocessing
-import polars as pl
 from scipy.io import mmwrite
 from scipy.sparse import csr_matrix
 from scipy.stats import ttest_1samp
@@ -283,7 +282,7 @@ def plotTwo(topObject, projectionName, celltype1, celltype2,
        alternateColumn=None, annotations=None, projections=None, gene=None, geneExpressions=None, randomOrder=False,
        plotMultiple=False, singleColorbar=False, unsupervisedContour=False, supervisedContour=False, maxLabelCount=None, keepFull=[], seed=1, axisRenames=(None, None),
        ax=None, figX=10, figY=10, DPI=100, name=None, hue=None, labels=None, labelDimensions=False, overlayLabels=None, palette=None, alpha=1, source="seaborn", 
-       markers=None, markerSize=80, legendMarkerScale=2.5, legendWidth=116.625, lineWidth=1.5, legendSpacing=0.05, xBounds=None, yBounds=None, maxBounds=False, boundaryMaxDistance=0.053, plotThreshold=True, 
+       markers=None, markerSize=80, legendMarkerScale=2.5, legendWidth=116.625, lineWidth=1.5, xBounds=None, yBounds=None, maxBounds=False, boundaryMaxDistance=0.053, plotThreshold=True, 
        plotParameters={}, axisFontSize=36, legendFontSize=20, titleFontSize=None, legendTitle=None, legendInner=True, legendReplacements={},
        title=None, getSamples=False, outFile=None, show=True):
 
@@ -327,7 +326,7 @@ def plotTwo(topObject, projectionName, celltype1, celltype2,
     
     # Set axes and key parameters for plot
     setPlotParameters(params=plotParameters, DPI=DPI, lineWidth=lineWidth)
-    fig, ax = plt.subplots(1, 1, figsize=(figX + legendSpace, figY)) if ax is None else (None, ax)
+    fig, ax = plt.subplots(1, 1, figsize=(figX, figY)) if ax is None else (None, ax)
     x, y = (projections.loc[celltype1], projections.loc[celltype2])
     labels = sorted(annotations.unique()) if labels is None else labels
     palette = setPalette(labels, source=source) if palette is None and gene is None and alternateColumn is None else palette
@@ -346,7 +345,7 @@ def plotTwo(topObject, projectionName, celltype1, celltype2,
                 labels=labels, markers=markers, markerSize=markerSize, alpha=alpha, axisFontSize=axisFontSize, singleColorbar=singleColorbar)
     else:  # If labeling is by cell type
         ax, legend = testLabelPlot(ax, x, y, annotations, palette, 
-                labels=labels, title=legendTitle, markers=markers, markerSize=markerSize, alpha=alpha, legendMarkerScale=legendMarkerScale, axisFontSize=axisFontSize, legendFontSize=legendFontSize, legendInner=legendInner, plotMultiple=plotMultiple, legendSpace=legendSpace, legendReplacements=legendReplacements)
+                labels=labels, title=legendTitle, markers=markers, markerSize=markerSize, alpha=alpha, legendMarkerScale=legendMarkerScale, axisFontSize=axisFontSize, legendFontSize=legendFontSize, legendInner=legendInner, plotMultiple=plotMultiple, legendReplacements=legendReplacements)
 
     # Add contours if desired
     ax = unsupervisedContourPlot(ax, x, y) if unsupervisedContour else ax
@@ -418,7 +417,7 @@ def alternateColumnPlot(ax, x, y, alternateColumn, alternateColumnValues, annota
 
 
 # Creates a Seaborn 2D scatterplot using projections onto basis columns as axes and source labels to identify points
-def testLabelPlot(ax, x, y, annotations, palette, title="", labels=None, markers=True, markerSize=40, legendMarkerScale=2, axisFontSize=16, legendFontSize=16, legendInner=False, alpha=1, plotMultiple=False, legendSpace=1, legendReplacements={}):
+def testLabelPlot(ax, x, y, annotations, palette, title="", labels=None, markers=True, markerSize=40, legendMarkerScale=2, axisFontSize=16, legendFontSize=16, legendInner=False, alpha=1, plotMultiple=False, legendReplacements={}):
     plot = sns.scatterplot(x=x, y=y, ax=ax, hue=annotations, style=annotations, hue_order=labels, style_order=labels, markers=markers, s=markerSize, palette=palette, alpha=alpha, linewidth=0.15)
     if plotMultiple:
         plot.legend_.remove()
