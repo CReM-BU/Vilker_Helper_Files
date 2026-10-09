@@ -9,10 +9,11 @@ library(SeuratDisk)
 ### Note: The functions in this file require AnnData through a Python environment. Conda recommended
 
 # Function to convert a modern Seurat object to AnnData.
-convertRdsSeuratToAnnData <- function(conversionInput, mainLayer=NULL, transferLayers=NULL, assay="RNA"){
+convertRdsSeuratToAnnData <- function(conversionInput, mainLayer=NULL, transferLayers=NULL, assay="RNA", joinLayers=FALSE){
   if (is.null(transferLayers)){ transferLayers <- c("data", "counts", "scale.data") }
   if (is.null(mainLayer)){ mainLayer <- "counts" }
   obj <- conversionInput$obj
+  if (joinLayers){ obj@assays[[assay]] <- JoinLayers(obj@assays[[assay]]) }
   # Because sceasy doesn't support v5, convert to v3
   if (substr(Version(obj), 1, 1) == "5"){ 
     print("Converting to v3...")
@@ -94,7 +95,7 @@ getFilenameWithoutExtension <- function(filename){
 ## transferLayers: Which layers should be transferred along with the main layers. By default, includes data and scale.data
 ## assay: Which assay type from which to extract the layers. By default RNA, but SCT and other types like spliced exist
 # which typically will refer to how the data were transformed
-convertSeuratToAnnData <- function(condaEnvironment=NULL, type="Rds", inputFile=NULL, outputFile=NULL, seuratObj=NULL, mainLayer=NULL, transferLayers=NULL, assay="RNA"){
+convertSeuratToAnnData <- function(condaEnvironment=NULL, type="Rds", inputFile=NULL, outputFile=NULL, seuratObj=NULL, mainLayer=NULL, transferLayers=NULL, assay="RNA", joinLayers=FALSE){
 
   # Initialize parameters
   if (toupper(type) == "RDS"){ type <- "rds" }
@@ -102,7 +103,7 @@ convertSeuratToAnnData <- function(condaEnvironment=NULL, type="Rds", inputFile=
   conversionInput <- getSeuratInputIfValid(type, inputFile=inputFile, outputFile=outputFile, seuratObj=seuratObj)
   if (is.null(conversionInput)){ return(0) }
     
-  if (type == "rds"){ success <- convertRdsSeuratToAnnData(conversionInput, mainLayer=mainLayer, transferLayers=transferLayers, assay=assay) }
+  if (type == "rds"){ success <- convertRdsSeuratToAnnData(conversionInput, mainLayer=mainLayer, transferLayers=transferLayers, assay=assay, joinLayers=joinLayers) }
   else if (type == "h5seurat"){ success <- convertH5seuratSeuratToAnnData(conversionInput, assay=assay) }
   else if (type == "Robj"){ success <- convertRobjSeuratToAnnData(conversionInput, assay=assay) }
   return(success)

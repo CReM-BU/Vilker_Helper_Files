@@ -39,10 +39,17 @@ convertAnnDataToSeurat(input, output, condaEnvironment=condaEnvironment)
 ```
 
 ```{r CurrentUsage}
-# input <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/Seurat/McCall.rds"
-output <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/McCallReannotated.h5ad"
-success <- convertSeuratToAnnData(seuratObj=McCallReannotated, condaEnvironment=condaEnvironment, type="rds", assay="RNA", inputFile=NULL, outputFile=output)
+# inputSeurat <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/Seurat/Natri.rds"
 
-# convertAnnDataToSeurat(input, output, condaEnvironment=condaEnvironment)
+
+outputAnnData <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/CampbellLUSC.h5ad"
+success <- convertSeuratToAnnData(seuratObj=condensed, condaEnvironment=condaEnvironment, type="Rds", assay="originalexp", transferLayers=c(), inputFile=NULL, outputFile=outputAnnData, joinLayers=FALSE)
+
+# condensed@assays$originalexp@counts@Dimnames[[1]] <- condensed@assays$originalexp@meta.features$Gene_name
+# condensed@assays$originalexp@data@Dimnames[[1]] <- condensed@assays$originalexp@meta.features$Gene_name
+
+# inputAnnData <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/AnnData/Tang.h5ad"
+# outputSeurat <- "/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/OutsidePaperObjects/Seurat/Tang.rds"
+# success <- convertAnnDataToSeurat(inputAnnData, outputSeurat, condaEnvironment=condaEnvironment)
 ```
 
