@@ -201,14 +201,13 @@ class TopObject:
 
             # Undersample some cell types based on a count maximum. Must be performed after other conditions
             if maxSamples is not None:
-                annotations = downsample(annotations[samples], maxSamples, keepFull=keepFull, seed=seed)
-                samples = annotations.index
+                samples = downsample(annotations[samples], maxSamples, keepFull=keepFull, seed=seed).index
 
         if not (inplace and df is None and series is None):
             if series is not None:
-                return series[samples] if not useAnnotations else (series[samples], annotations)
+                return series[samples] if not useAnnotations else (series[samples], annotations[samples])
             df = self.df if df is None else df
-            return df[samples] if not useAnnotations else (df[samples], annotations)
+            return df[samples] if not useAnnotations else (df[samples], annotations[samples])
         if not filtered:
             return False
 
@@ -230,12 +229,9 @@ class TopObject:
         
         print("Processing scTOP data...")
         processed = top.process(df, average=useAverage, chunk_size=chunks)
-        if setProcessed:
-            self.processed = processed
-        else:
-            return (processed, annotations) if useAnnotations else processed
+        self.processed = processed if setProcessed else self.processed
         print("Done processing!")
-        return processed
+        return (processed, annotations) if useAnnotations and not setProcessed else processed
 
     # Main scTOP function, computing similarity between labels in sources and basis
     def project(self, basis, projectionName, pca=None, alignGenes=False, normalize=False, returnOverlap=False, processed=None):

@@ -867,7 +867,7 @@ def geneViolinPlot(topObject, gene, outFile=None, figX=10, figY=4, axisFontSize=
     })
     violinResults = sns.violinplot(pd.DataFrame(data), inner="quartile")
     if title == "":
-        title = topObject.name + " " + gene + " Normalized Expression"
+        title = topObject.identifier + " " + gene + " Normalized Expression"
     plt.title(title)
     if outFile is not None:
         plt.savefig(outFile, bbox_inches='tight', dpi=300)
