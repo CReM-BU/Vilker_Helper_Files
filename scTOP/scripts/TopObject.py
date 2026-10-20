@@ -49,11 +49,8 @@ class TopObject:
             if not manualInit:  # In case you want to adjust any of the parameters first
                 self.setup(useAverage=useAverage, skipProcess=skipProcess, keep=keep, exclude=exclude, maxSamples=maxSamples, keepFull=keepFull)
 
-        self.projections = {}
         self.basis = None
-        self.combinedBases = {}
-        self.PCAs = {}
-        self.PCABases = {}
+        self.projections, self.combinedBases, self.PCAs, self.PCABases, self.participationRatios = ({}, {}, {}, {}, {})
 
     # Summary of parameters upon printing object
     def __str__(self):
@@ -168,9 +165,15 @@ class TopObject:
 
     # Set TopObject to include or exclude cells with certain labels. Not for gene filtering! Return True if filtering occurred
     def filter(self, keep=None, exclude=None, condition=None, maxSamples=None, keepFull=[], conditionList=None,
-               skipProcess=True, useAverage=False, seed=0, annotations=None, df=None, inplace=True):
-        
-        annotations = self.annotations if annotations is None else annotations
+               skipProcess=True, useAverage=False, seed=0, annotations=None, df=None, series=None, inplace=True, useAnnotations=True):
+
+        # Check valid parameters
+        if not useAnnotations and df is None and series is None:
+            print("Must have something to filter!")
+            return False
+
+        annotations = self.annotations if annotations is None and useAnnotations else annotations
+        samples = series.index if series is not None else df.columns if df is not None else annotations.index
         filtered = False
         
         # Begin filtering if at least one condition was selected
@@ -194,92 +197,89 @@ class TopObject:
                 combinedCondition = conditionList[0]
                 for i in range(1, len(conditionList)):
                     combinedCondition = np.logical_and(combinedCondition, conditionList[i])
-                annotations = annotations[combinedCondition]
+                samples = samples[combinedCondition]
 
             # Undersample some cell types based on a count maximum. Must be performed after other conditions
             if maxSamples is not None:
-                annotations = downsample(annotations, maxSamples, keepFull=keepFull, seed=seed)
+                annotations = downsample(annotations[samples], maxSamples, keepFull=keepFull, seed=seed)
+                samples = annotations.index
 
-        if not (inplace and df is None):
+        if not (inplace and df is None and series is None):
+            if series is not None:
+                return series[samples] if not useAnnotations else (series[samples], annotations)
             df = self.df if df is None else df
-            return df.loc[:, annotations.index], annotations
+            return df[samples] if not useAnnotations else (df[samples], annotations)
         if not filtered:
             return False
 
         # Process data as needed
-        self.setAnndata(self.anndata[annotations.index])
+        self.setAnndata(self.anndata[samples])
         if not skipProcess:
             self.process()
         elif self.processed is not None:
-            self.processed = self.processed.loc[:, self.processed.columns.isin(self.df.columns)]
+            self.processed = self.processed.loc[:, self.processed.columns.isin(self.df.columns)] ## TODO: See if this can be condensed
         print("Finished filtering!")
         return True
 
     # First scTOP function, ranks and normalizes source 
-    def process(self, useAverage=False, chunks=500, df=None, annotations=None, maxSamples=None, keepFull=[], condition=None, setProcessed=True, seed=1):
+    def process(self, useAverage=False, chunks=500, df=None, annotations=None, maxSamples=None, keepFull=[], condition=None, setProcessed=True, seed=1, useAnnotations=True):
         df = self.df if df is None else df
-        df, annotations = self.filter(annotations=annotations, df=df, condition=condition, maxSamples=maxSamples, keepFull=keepFull, seed=seed, inplace=False)
+        filtered = self.filter(annotations=annotations, df=df, condition=condition, maxSamples=maxSamples, keepFull=keepFull, seed=seed, inplace=False, 
+                                      useAnnotations=useAnnotations)
+        df, annotations = filtered if useAnnotations else (filtered, None)
         
         print("Processing scTOP data...")
         processed = top.process(df, average=useAverage, chunk_size=chunks)
         if setProcessed:
             self.processed = processed
         else:
-            return processed, annotations
+            return (processed, annotations) if useAnnotations else processed
         print("Done processing!")
         return processed
 
     # Main scTOP function, computing similarity between labels in sources and basis
-    def project(self, basis, projectionName, pca=None, alignGenes=False, normalize=False, returnOverlap=False):
-        print("Projecting onto basis...")
-        if alignGenes:
-            self.setAnndata(self.anndata[:, self.df.index.isin(basis.index)])
-        if self.processed is None or alignGenes:
-            self.process()
+    def project(self, basis, projectionName, pca=None, alignGenes=False, normalize=False, returnOverlap=False, processed=None):
+        print("Projecting " + self.identifier + " onto " + projectionName + " basis...")
+        if processed is None:
+            if alignGenes:
+                self.setAnndata(self.anndata[:, self.df.index.isin(basis.index)])
+            processed = self.process() if self.processed is None or alignGenes else self.processed
         if pca is not None:
-            processed = self.processed.loc[pca.feature_names_in_, :].T
+            processed = processed.loc[pca.feature_names_in_, :].T
             processedPCA = pd.DataFrame(pca.transform(processed), index=processed.index)
             projection = top.score(basis, processedPCA.T)
             overlap = "N/A"
         else:
-            overlap = np.intersect1d(basis.index, self.processed.index)
+            overlap = np.intersect1d(basis.index, processed.index)
             if normalize:
-                processedAligned = self.processed.loc[overlap, :]
+                processedAligned = processed.loc[overlap, :]
                 basisAligned = basis.loc[overlap, :]
                 processedAligned /= np.linalg.norm(processedAligned, axis=0, keepdims=True)
                 basisAligned /= np.linalg.norm(basisAligned, axis=0, keepdims=True)
                 # processedAligned = top.process(processedAligned, average=False, chunk_size=500)
                 projection = top.score(basisAligned, processedAligned)
             else:
-                projection = top.score(basis, self.processed)
+                projection = top.score(basis, processed)
 
         self.projections[projectionName] = projection
+        participationRatios = [(sampleProjection ** 2).sum() ** 2 / (sampleProjection ** 4).sum() for sample, sampleProjection in projection.items()]
+        self.participationRatios[projectionName] = pd.Series(participationRatios, index=projection.columns)
         print("Finished projecting! " + str(len(overlap)) + " genes were in both the source and basis.")
         if returnOverlap:
             return projection, overlap
         return projection
 
     # Using any dataset with well-defined clusters, set it as a basis
-    def setBasis(self, holdouts=None, threshold=200, seed=1, getScores=False, usePCA=False, allowedGenes=None, basisName=None, useProcessed=False, includeCriteria=None, maxSamples=None, annotationColumn=None):
+    def setBasis(self, holdouts=None, threshold=200, seed=1, getScores=False, usePCA=False, allowedGenes=None, basisName=None, useProcessed=False, includeCriteria=None, maxSamples=None, annotations=None):
         print("Setting basis...")
 
         # Set and filter data that will form basis
         processed = self.process() if self.processed is None and usePCA else None # Process dataset if not done yet and needed for PCA
         cellData = self.processed if usePCA or useProcessed else self.df
         cellData = cellData.loc[cellData.index.isin(allowedGenes), :] if allowedGenes is not None else cellData
-        # cellData = cellData.loc[:, includeCriteria] if includeCriteria is not None else cellData
-        annotations = self.annotations if annotationColumn is None else self.metadata[annotationColumn]
-        # annotations = annotations[self.df.columns.isin(cellData.columns)]
         holdouts = 0.2 if type(holdouts) is bool and holdouts else holdouts
-
-        # Undersample some cell types based on a count maximum
-        # if maxSamples is not None:
         maxSamples = maxSamples if holdouts is None or maxSamples is None else int(maxSamples / (1 - holdouts)) # Adjust based on removed holdouts so amount removed is as specified
         cellData, annotations = self.filter(df=cellData, annotations=annotations, condition=includeCriteria, maxSamples=maxSamples, seed=seed, inplace=False)
-            # rus = RandomUnderSampler(sampling_strategy=getLabelCountsMap(annotations, maxCount=maxSamples), random_state=seed)
-            # samples, annotations = rus.fit_resample(np.array(annotations.index).reshape(-1, 1), annotations)
-            # cellData = cellData.loc[:, [sample[0] for sample in samples]]
-            # annotations.index = cellData.columns
 
         # Using fewer than 150-200 cells leads to nonsensical results, due to noise. More cells -> less sampling error
         typeCounts = annotations.value_counts()
@@ -333,7 +333,7 @@ class TopObject:
         print("Combining bases...")
         
         # Get and set basis for this object as needed
-        basis1 = alternateFirstBasis if alternateFirstBasis is not None else self.basis
+        basis1 = self.basis if alternateFirstBasis is None else alternateFirstBasis
         basis1 = self.setBasis() if basis1 is None else basis1
 
         # Get basis to be combined with
@@ -357,9 +357,11 @@ class TopObject:
         return combinedBasis
 
     # Test an existing basis (not combined). Optionally adjust the minimum accuracy or sample counts thresholds
-    def testBasis(self, specificationValue=0.1, holdouts=0.2, threshold=200, seed=1, includeCriteria=None, annotationColumn=None, allowedGenes=None, 
-                  maxBasisSamples=None, maxTestSamples=None, trialCount=1):
-        accuracies = {'top1': 0, 'top3': 0, 'Unspecified': 0}
+    def testBasis(self, specificationValue=0.1, holdouts=0.2, threshold=200, seed=1, includeCriteria=None, annotations=None, allowedGenes=None, 
+                  maxBasisSamples=None, maxTestSamples=None, trialCount=1, chunkSize=500):
+        
+        annotations = self.annotations if annotations is None else annotations
+        accuracies = {'Top1': 0, 'Top3': 0, 'Unspecified': 0}
         predictions = {"True": [], "Top1": [], "Top3": []}
         seed0 = seed
         threshold = threshold if maxBasisSamples is None or threshold < maxBasisSamples else maxBasisSamples - 1
@@ -367,28 +369,20 @@ class TopObject:
         # Multiple trials if desired
         for i in range(trialCount):
             print("Trial: " + str(i + 1))
-            
+    
             # Setting basis with holdouts for testing
-            basis, trainingIDs = self.setBasis(holdouts=holdouts, threshold=threshold, seed=seed, includeCriteria=includeCriteria, allowedGenes=allowedGenes, maxSamples=maxBasisSamples, annotationColumn=annotationColumn)
+            basis, trainingIDs = self.setBasis(holdouts=holdouts, threshold=threshold, seed=seed, includeCriteria=includeCriteria, allowedGenes=allowedGenes, maxSamples=maxBasisSamples, annotations=annotations)
             IDs = self.df.columns if includeCriteria is None else self.df.columns[includeCriteria]
             _, indices, _ = np.intersect1d(IDs, trainingIDs, return_indices=True) # Using intersect + delete because setdiff1d has performance issues
-            testIDs = np.delete(IDs, indices)
-    
-            # Undersample some cell types based on a count maximum
-            if maxTestSamples is not None:
-                annotations = self.annotations if annotationColumn is None else self.metadata[annotationColumn]
-                annotations = annotations[testIDs]
-                rus = RandomUnderSampler(sampling_strategy=getLabelCountsMap(annotations, maxCount=maxTestSamples), random_state=seed)
-                samples, annotations = rus.fit_resample(np.array(annotations.index).reshape(-1, 1), annotations)
-                testIDs = [sample[0] for sample in samples]
+            testIDs = np.delete(IDs, indices)    
+            testIDs = testIDs if maxTestSamples is None else downsample(annotations[testIDs], maxTestSamples, seed=seed).index
         
             # Predict labels for subsets of test IDs for efficiency
             print("Processing test data...")
-            splitIDs = np.array_split(testIDs, 10)
-            for currentIDs in tqdm(splitIDs):
-                currentProcessed = top.process(self.df[currentIDs])
+            for currentIDs in tqdm(np.array_split(testIDs, 10)):
+                currentProcessed = top.process(self.df[currentIDs], chunk_size=chunkSize)
                 currentProjections = top.score(basis, currentProcessed)
-                accuracies, predictions = self.scoreProjections(currentProjections, accuracies, predictions, specificationValue=specificationValue, annotationColumn=annotationColumn)
+                accuracies, predictions = self.scoreProjections(currentProjections, accuracies, predictions, specificationValue=specificationValue, annotations=annotations[currentIDs])
                 del currentProcessed, currentProjections
 
             seed = 101 * seed0 * i + 9 * (i + seed0 + 1) + seed0  # Arbitrary function to prevent collisions in seed numbers
@@ -403,36 +397,36 @@ class TopObject:
         self.testResults = (accuracies, predictions)
         return self.testResults[0]
 
-    # Get the metrics for a given projection. Optionally adjust the minimum accuracy threshold
-    def scoreProjections(self, projections, accuracies, predictions, specificationValue=0.1, annotationColumn=None): # cells with maximum projection under specificationValue are considered "unspecified"
+    # Get the metrics for a given projection. Cells with maximum projection under specificationValue are considered "unspecified"
+    def scoreProjections(self, projections, accuracies, predictions, specificationValue=0.1, annotations=None):
 
-        annotationColumn = annotationColumn or self.cellTypeColumn
-        for sampleId, sampleProjections in projections.items():
+        annotations = self.annotations if annotations is None else annotations
+
+        # For each cell's projection onto all reference states
+        for sampleID, sampleProjections in projections.items():
+            
+            # Get the predicted labels for the cells and how they compare to the assigned label
             typesSortedByProjections = sampleProjections.sort_values(ascending=False).index
-            trueType = self.metadata.loc[sampleId, annotationColumn]
-            topType = typesSortedByProjections[0]
+            trueType, topType = (annotations[sampleID], typesSortedByProjections[0])
+            topType = 'Unspecified' if sampleProjections.max() < specificationValue else topType # List test outcome as unspecified if below threshold
+            inTop3 = trueType in typesSortedByProjections[:3]
 
-            if sampleProjections.max() < specificationValue:
-                accuracies['Unspecified'] += 1
-                topType = 'Unspecified'
+            # Increment the number of cells meeting the criteria if applicable
+            accuracies['Unspecified'] += 1 if topType == 'Unspecified' else 0
+            accuracies['Top1'] += 1 if topType == trueType else 0
+            accuracies['Top3'] += 1 if inTop3 else 0
 
+            # List the prediction for the cell
             predictions["True"].append(trueType)
             predictions["Top1"].append(topType)
-
-            if topType == trueType:
-                accuracies['top1'] += 1
-
-            inTop3 = trueType in typesSortedByProjections[:3]
-            if inTop3:
-                accuracies['top3'] += 1
             predictions["Top3"].append(inTop3)
 
         return accuracies, predictions
 
     # Create correlation matrix between cell types of basis, helpful to determine if any features are overlapping
-    def getBasisCorrelations(self, basis=None, metric=None):
+    def getBasisCorrelations(self, basis=None, metric="dot"):
         basisCopy = self.basis if basis is None else basis
-        if metric is None or metric == "dot":
+        if metric == "dot":
             corr = basisCopy.T.dot(basisCopy)
         elif metric == "pearson":
             corr = basisCopy.corr()
@@ -453,13 +447,12 @@ class TopObject:
         return predictivity
 
     # Create score contribution matrix displaying product of predictivity and normalized expression
-    def getScoreContributions(self, basis=None, subsetCategory=None, subsetName=None, includeCriteria=None):
+    def getScoreContributions(self, basis=None, includeCriteria=None):
 
         # Get label expressions
         scoreContributions = {}
         predictivityMatrix = self.predictivity if basis is None else self.getBasisPredictivity(basis=basis)
         geneExpressions = self.processed if includeCriteria is None else self.processed.loc[:, includeCriteria]
-        # geneExpressions = geneExpressions if subsetCategory is None or subsetName is None else geneExpressions.loc[:, subsetCategory == subsetName]
 
         # Multiply predictivity by expression for each basis label
         for label in predictivityMatrix.index:
@@ -531,9 +524,9 @@ class TopObject:
                 # Use model to determine efficacy of gene subsets
                 projection = top.score(basis, testX)
                 results = []
-                for sampleId, sampleProjections in projection.items():
+                for sampleID, sampleProjections in projection.items():
                     typesSortedByProjections = sampleProjections.sort_values(ascending=False).index
-                    trueType = testY.loc[sampleId]
+                    trueType = testY.loc[sampleID]
                     topType = typesSortedByProjections[0]
                     results.append(int(trueType == topType and sampleProjections.max() > specificationValue))
                 
@@ -554,7 +547,7 @@ class TopObject:
 
         # If filtering an unprocessed large dataset
         if startFromDF or (processed is None and (self.processed is None or self.processed.shape != self.df.shape)):
-            processed, annotations = self.process(setProcessed=inplace, annotations=annotations, condition=includeCriteria, maxSamples=maxSamples, seed=seed)
+            processed, annotations = self.process(setProcessed=False, annotations=annotations, condition=includeCriteria, maxSamples=maxSamples, seed=seed)
         # If we already have processed data, filter as normal
         else:
             processed = self.processed if processed is None else processed
@@ -567,6 +560,7 @@ class TopObject:
         selectedFeatures = list(genes[selector.get_support()])
         if not inplace:
             return processed.loc[selectedFeatures], selectedFeatures
+        self.processed = processed
         self.setAnndata(self.anndata[:, genes.isin(selectedFeatures)])
 
     # Get ortholog genes based on Ensembl mapping to another species
