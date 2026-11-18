@@ -221,8 +221,9 @@ class TopObject:
         return True
 
     # First scTOP function, ranks and normalizes source 
-    def process(self, useAverage=False, chunks=500, df=None, annotations=None, maxSamples=None, keepFull=[], condition=None, setProcessed=True, seed=1, useAnnotations=True):
+    def process(self, useAverage=False, chunks=500, df=None, annotations=None, maxSamples=None, keepFull=[], allowedGenes=None, condition=None, setProcessed=True, seed=1, useAnnotations=True):
         df = self.df if df is None else df
+        df = df if allowedGenes is None else df.loc[allowedGenes]
         filtered = self.filter(annotations=annotations, df=df, condition=condition, maxSamples=maxSamples, keepFull=keepFull, seed=seed, inplace=False, 
                                       useAnnotations=useAnnotations)
         df, annotations = filtered if useAnnotations else (filtered, None)
@@ -234,7 +235,7 @@ class TopObject:
         return (processed, annotations) if useAnnotations and not setProcessed else processed
 
     # Main scTOP function, computing similarity between labels in sources and basis
-    def project(self, basis, projectionName, pca=None, alignGenes=False, normalize=False, returnOverlap=False, processed=None):
+    def project(self, basis, projectionName, pca=None, alignGenes=False, normalize=False, returnOverlap=False, processed=None, allowedGenes=None):
         print("Projecting " + self.identifier + " onto " + projectionName + " basis...")
         if processed is None:
             if alignGenes:
@@ -246,13 +247,13 @@ class TopObject:
             projection = top.score(basis, processedPCA.T)
             overlap = "N/A"
         else:
+            processed = processed if allowedGenes is None else processed.loc[allowedGenes]
             overlap = np.intersect1d(basis.index, processed.index)
             if normalize:
                 processedAligned = processed.loc[overlap, :]
                 basisAligned = basis.loc[overlap, :]
                 processedAligned /= np.linalg.norm(processedAligned, axis=0, keepdims=True)
                 basisAligned /= np.linalg.norm(basisAligned, axis=0, keepdims=True)
-                # processedAligned = top.process(processedAligned, average=False, chunk_size=500)
                 projection = top.score(basisAligned, processedAligned)
             else:
                 projection = top.score(basis, processed)
@@ -266,22 +267,23 @@ class TopObject:
         return projection
 
     # Using any dataset with well-defined clusters, set it as a basis
-    def setBasis(self, holdouts=None, threshold=200, seed=1, getScores=False, usePCA=False, allowedGenes=None, basisName=None, useProcessed=False, includeCriteria=None, maxSamples=None, annotations=None):
+    def setBasis(self, holdouts=None, threshold=200, seed=1, getScores=False, usePCA=False, allowedGenes=None, varianceQuantile=None, bestGenesProportion=None, basisName=None, useProcessed=False, includeCriteria=None, maxSamples=None, annotations=None, df=None):
         print("Setting basis...")
 
         # Set and filter data that will form basis
         processed = self.process() if self.processed is None and usePCA else None # Process dataset if not done yet and needed for PCA
-        cellData = self.processed if usePCA or useProcessed else self.df
+        cellData = self.processed if usePCA or useProcessed else self.df if df is None else df
         cellData = cellData.loc[cellData.index.isin(allowedGenes), :] if allowedGenes is not None else cellData
         holdouts = 0.2 if type(holdouts) is bool and holdouts else holdouts
         maxSamples = maxSamples if holdouts is None or maxSamples is None else int(maxSamples / (1 - holdouts)) # Adjust based on removed holdouts so amount removed is as specified
         cellData, annotations = self.filter(df=cellData, annotations=annotations, condition=includeCriteria, maxSamples=maxSamples, seed=seed, inplace=False)
-
+        cellData = cellData if varianceQuantile is None else self.filterLowVarianceGenes(varianceQuantile, df=cellData, inplace=False)
+        cellData = cellData if bestGenesProportion is None else cellData.loc[self.filterBestGenes(bestGenesProportion, allowedGenes=None if varianceQuantile is None else cellData.index, 
+                                                                                includeCriteria=self.annotations.index.isin(annotations.index), inplace=False).index]
         # Using fewer than 150-200 cells leads to nonsensical results, due to noise. More cells -> less sampling error
         typeCounts = annotations.value_counts()
         typesAboveThreshold = typeCounts[typeCounts >= threshold].index
-        basisList = []
-        trainingIDs = []
+        basisList, trainingIDs = ([], [])
 
         # Set structures for PCA basis if using
         if usePCA:
@@ -354,21 +356,26 @@ class TopObject:
 
     # Test an existing basis (not combined). Optionally adjust the minimum accuracy or sample counts thresholds
     def testBasis(self, specificationValue=0.1, holdouts=0.2, threshold=200, seed=1, includeCriteria=None, annotations=None, allowedGenes=None, 
-                  maxBasisSamples=None, maxTestSamples=None, trialCount=1, chunkSize=500):
+                  bestGenesProportion=None, maxBasisSamples=None, maxTestSamples=None, trialCount=1, chunkSize=500):
         
-        annotations = self.annotations if annotations is None else annotations
+        # annotations = self.annotations if annotations is None else annotations
         accuracies = {'Top1': 0, 'Top3': 0, 'Unspecified': 0}
         predictions = {"True": [], "Top1": [], "Top3": []}
         seed0 = seed
         threshold = threshold if maxBasisSamples is None or threshold < maxBasisSamples else maxBasisSamples - 1
+        df, annotations = self.filter(inplace=False, condition=includeCriteria, annotations=annotations, seed=seed)
+        df = df if bestGenesProportion is None else df[self.filterBestGenes(bestGenesProportion, inplace=False, 
+                                                                            includeCriteria=self.annotations.isin(annotations)).columns]
+        IDs = df.columns
 
         # Multiple trials if desired
         for i in range(trialCount):
             print("Trial: " + str(i + 1))
     
             # Setting basis with holdouts for testing
-            basis, trainingIDs = self.setBasis(holdouts=holdouts, threshold=threshold, seed=seed, includeCriteria=includeCriteria, allowedGenes=allowedGenes, maxSamples=maxBasisSamples, annotations=annotations)
-            IDs = self.df.columns if includeCriteria is None else self.df.columns[includeCriteria]
+            basis, trainingIDs = self.setBasis(df=df, holdouts=holdouts, threshold=threshold, annotations=annotations, maxSamples=maxBasisSamples, seed=seed, allowedGenes=allowedGenes)
+            # return basis, trainingIDs
+            # IDs = self.df.columns if includeCriteria is None else self.df.columns[includeCriteria]
             _, indices, _ = np.intersect1d(IDs, trainingIDs, return_indices=True) # Using intersect + delete because setdiff1d has performance issues
             testIDs = np.delete(IDs, indices)    
             testIDs = testIDs if maxTestSamples is None else downsample(annotations[testIDs], maxTestSamples, seed=seed).index
@@ -443,18 +450,24 @@ class TopObject:
         return predictivity
 
     # Create score contribution matrix displaying product of predictivity and normalized expression
-    def getScoreContributions(self, basis=None, includeCriteria=None):
+    def getScoreContributions(self, basis=None, includeCriteria=None, getDiffs=False):
 
         # Get label expressions
         scoreContributions = {}
         predictivityMatrix = self.predictivity if basis is None else self.getBasisPredictivity(basis=basis)
         geneExpressions = self.processed if includeCriteria is None else self.processed.loc[:, includeCriteria]
-
+        if getDiffs:
+            differentials = geneExpressions.mean(axis=1) - self.processed.loc[:, ~includeCriteria].mean(axis=1)
+        term1 = differentials if getDiffs else geneExpressions
+        
         # Multiply predictivity by expression for each basis label
         for label in predictivityMatrix.index:
             scoreContributions[label] = {}
-            commonGenes = np.intersect1d(geneExpressions.index, predictivityMatrix.columns)
-            scoreContributions[label] = geneExpressions.loc[commonGenes].multiply(predictivityMatrix.loc[label, commonGenes], axis=0)
+            commonGenes = np.intersect1d(term1.index, predictivityMatrix.columns)
+            # differentials = geneExpressions.loc[commonGenes].mean(axis=1) - externalGeneExpressions.mean(axis=1)
+            # topObject.processed.loc[:, topObject.annotations != testLabel].reindex(genes.index, fill_value=0).loc[genes.index].T.mean(axis=0)
+            scoreContributions[label] = term1.loc[commonGenes].multiply(predictivityMatrix.loc[label, commonGenes], axis=0)
+            # scoreContributions[label] = geneExpressions.loc[commonGenes].multiply(predictivityMatrix.loc[label, commonGenes], axis=0)
 
         self.scoreContributions = scoreContributions
         return scoreContributions
@@ -539,7 +552,7 @@ class TopObject:
         return bestGenesAnalysis(proportionTestMap, proportions, trials)
 
     # Filter dataset to genes that maximize accurate identification of cell types given a proportion
-    def filterBestGenes(self, proportion, processed=None, startFromDF=False, inplace=True, includeCriteria=None, annotations=None, maxSamples=None, seed=1):
+    def filterBestGenes(self, proportion, processed=None, startFromDF=False, inplace=True, allowedGenes=None, includeCriteria=None, annotations=None, maxSamples=None, seed=1):
 
         # If filtering an unprocessed large dataset
         if startFromDF or (processed is None and (self.processed is None or self.processed.shape != self.df.shape)):
@@ -548,22 +561,35 @@ class TopObject:
         else:
             processed = self.processed if processed is None else processed
             processed, annotations = self.filter(df=processed, annotations=annotations, condition=includeCriteria, maxSamples=maxSamples, seed=seed, inplace=False)
+        processed = processed if allowedGenes is None else processed.loc[allowedGenes]
 
         # Use ANOVA to get the genes that maximize reclassification
+        print("Filtering best genes...")
         genes = processed.index
         selector = SelectKBest(score_func=f_classif, k=int(proportion * len(genes)))
         trainSelected = selector.fit_transform(processed.T, annotations)
         selectedFeatures = list(genes[selector.get_support()])
+        print("Done gene filtering!")
         if not inplace:
-            return processed.loc[selectedFeatures], selectedFeatures
+            return processed.loc[selectedFeatures]
         self.processed = processed
         self.setAnndata(self.anndata[:, genes.isin(selectedFeatures)])
 
+    # Filter out genes with variance below a quantile threshold
+    def filterLowVarianceGenes(self, quantile, df=None, inplace=True):
+        df = df if df is not None else self.processed if self.processed is not None else self.df
+        variance = df.var(axis=1)
+        df = df.loc[variance > np.quantile(variance, quantile), :]
+        if inplace:
+            self.setAnndata(self.anndata[:, df.index])
+        else:
+            return df
+
     # Get ortholog genes based on Ensembl mapping to another species
-    def getOrthologs(self, mapping=None, inplace=True):
+    def getOrthologs(self, mapping=None, mappingFile="/restricted/projectnb/crem-trainees/Kotton_Lab/Eitan/Vilker_Helper_Files/scTOP/objects/HumanMouseOrthologs.csv", inplace=True):
 
         # Filter out genes without orthologs and set names side by side
-        mapping = pd.read_csv("../objects/HumanMouseOrthologs.csv") if mapping is None else mapping
+        mapping = pd.read_csv(mappingFile) if mapping is None else mapping
         print("Filtering AnnData object for orthologs...")
         validMap = mapping[mapping['test'].isin(self.df.index)]
         orthologAligned = self.anndata[:, validMap['test']].copy()
@@ -654,6 +680,9 @@ def downsample(annotations, maxCount, df=None, proportion=None, keepFull=[], see
 
 # Add or update an entry to a summary file containing metadata regarding datasets
 def addDataset(summaryFile, name, filePath=None, cellTypeColumn=None, toKeep=None, toExclude=None, timeColumn=None, species=None, duplicates=None, raw=None, layer=None, comments=None):
+    if not os.path.exists(summaryFile):
+        print("Invalid dataset collection supplied!")
+        return None
     summaryFileInfo = pd.read_csv(summaryFile, index_col="Name", keep_default_na=False)
     possibleEntries = [cellTypeColumn, toKeep, toExclude, filePath, timeColumn, species, duplicates, raw, layer, comments]
     entryCount = len(possibleEntries)
@@ -689,7 +718,7 @@ def dynamicAddDataset(summaryFile=None):
     try:
         if summaryFile is None:
             summaryFile = processInput("Enter the file path of a csv containing entries formatted for scTOP:", isFile=True, isRequired=True)
-        name = processInput("Assign name. Enter a name to describe your dataset (if updating existing entry, choose the same name):", isRequired=True)
+        name = processInput("Assign name. Enter a name (no spaces) to describe your dataset (if updating existing entry, choose the same name):", isRequired=True)
         filePath = processInput("Assign filePath. Enter the file path corresponding to the anndata object (.h5ad) for your dataset:", isFile=True)
         cellTypeColumn = processInput("Assign cellTypeColumn. Enter the title of the column containing cell type annotations:")
         toKeep = processInput("Assign toKeep. Press Y to enter a list of cell types that you may filter to later or press Enter to skip:", followUpMessage="Enter a cell type to include in filtering or press Enter to continue", isList=True)
@@ -1019,25 +1048,26 @@ def writeAnnData(annDataObj, outFile, indexReplace=None):
     print("Finished!")
 
 
-# # Use run-length encoding and sparse matrix to store processed data as small as possible. Note: Still very inefficient relative to raw data because processing removes 0s
-# def writeProcessed(processed, outFile):
-#     print("Converting to polars...")
-#     polarsProc = pl.from_pandas(processed)
+# Use run-length encoding and sparse matrix to store processed data as small as possible. Note: Still very inefficient relative to raw data because processing removes 0s
+def writeProcessed(processed, outFile):
+    print("Converting to polars...")
+    polarsProc = pl.from_pandas(processed)
 
-#     print("Applying RLE...")
-#     rleResults = {}
-#     for col in polarsProc.columns:
-#         unnested = polarsProc[col].rle().struct.unnest()
-#         rleResults[f"{col}_len"] = unnested["len"]
-#         rleResults[f"{col}_value"] = unnested["value"]
+    print("Applying RLE...")
+    rleResults = {}
+    for col in polarsProc.columns:
+        # zeroVal = col.min() # Find lowest value, set everything with lowest value to 0, add lowest to end of results
+        unnested = polarsProc[col].rle().struct.unnest()
+        rleResults[f"{col}_len"] = unnested["len"]
+        rleResults[f"{col}_value"] = unnested["value"]
 
-#     print("Padding with 0s...")
-#     maxLen = max(s.len() for s in rleResults.values())
-#     rlePadded = {name: s.extend_constant(0, maxLen - s.len()) if s.len() < maxLen else s for name, s in rleResults.items()}
-#     rleStacked = np.column_stack([rlePadded[name].to_numpy() for name in rlePadded])
+    print("Padding with 0s...")
+    maxLen = max(s.len() for s in rleResults.values())
+    rlePadded = {name: s.extend_constant(0, maxLen - s.len()) if s.len() < maxLen else s for name, s in rleResults.items()}
+    rleStacked = np.column_stack([rlePadded[name].to_numpy() for name in rlePadded])
 
-#     print("Converting to sparse and writing...")
-#     mmwrite(outFile, csr_matrix(rleStacked))
+    print("Converting to sparse and writing...")
+    mmwrite(outFile, csr_matrix(rleStacked))
 
 
 # # Decompress sparse processed data and reverse run-length encoding

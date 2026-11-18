@@ -24,7 +24,7 @@ from sklearn.metrics import confusion_matrix
 from sklearn import preprocessing
 from scipy.io import mmwrite
 from scipy.sparse import csr_matrix
-from scipy.stats import ttest_1samp
+from scipy.stats import ttest_1samp, zscore
 import os
 os.environ['SCIPY_ARRAY_API'] = '1'
 import random
@@ -60,11 +60,7 @@ def getTimeAveragedProjections(basis, df, cellLabels, times, timeSortFunc, subst
 def getMatchingProjections(topObject, projectionName, basisKeep=None, testKeep=None, includeCriteria=None, prefix=None, annotations=None):
 
     projection, annotations = topObject.filter(df=topObject.projections[projectionName], annotations=annotations, condition=includeCriteria)
-    # projection = topObject.projection[projectionName]
-    # projection = projection if includeCriteria is None else projection.loc[:, includeCriteria]
-    # annotations = topObject.annotations if alternateAnnotations is None else alternateAnnotations
-    # annotations = annotations if includeCriteria is None else annotations[includeCriteria]
-
+    
     basisKeep = basisKeep or sorted(projection.index)
     testKeep = testKeep or sorted(set(annotations))
 
@@ -138,7 +134,7 @@ def setupOverlay(topObjects, projectionName, includeCriteriaList, basis=None, fo
         projection = topObject.project(basis, projectionName) if forceProject or projectionName not in topObject.projections else topObject.projections[projectionName]
 
         # Get data for everything but the first set, which is handled by the plotTwo function normally
-        projection, annotation = topObject.filter(df=projection, condition=includeCriteria)
+        projection, annotation = topObject.filter(df=projection, condition=includeCriteria, inplace=False)
         samples = annotation.index
         projections, annotations = (projections + [projection], annotations + [annotation])
         geneExpressions = geneExpressions + [topObject.processed[samples]] if getExpressions else None
@@ -199,6 +195,7 @@ def getProjectionStatsFocused(topObject, projectionName, target, includeCriteria
         output[label]["Count"] = len(projFilt.columns)
         projFilt = projFilt.loc[target, :]
         output[label]["Mean Projection"] = projFilt.mean(axis=0)
+        output[label]["Standard Deviation Projection"] = projFilt.std(axis=0)
         projFilt = projFilt[projFilt > 0.1]
         output[label]["Over Threshold Count"] = len(projFilt)
         output[label]["Over Threshold Proportion"] = output[label]["Over Threshold Count"] / output[label]["Count"]
@@ -264,12 +261,13 @@ def setMarkers(labels):
 
 
 # Set the plt visual parameters for fonts, lines, etc.
-def setPlotParameters(params={}, DPI=100, edgeColor="black", lineWidth=1, fontFamily="serif", fontSerif="STIXGeneral", mathFont="stix", scale=1, axisFontSize=36, titleFontSize=36):
+def setPlotParameters(params={}, DPI=100, edgeColor="black", lineWidth=1, fontFamily="serif", fontSerif="STIXGeneral", mathFont="stix", scale=1, generalFontSize=None, axisFontSize=36, titleFontSize=None):
     plt.rcParams.update({
         "axes.edgecolor": edgeColor,
         "figure.dpi": DPI,
         "axes.linewidth": lineWidth * scale,
-        "axes.titlesize": titleFontSize * scale,
+        "font.size": generalFontSize or axisFontSize,
+        "axes.titlesize": (titleFontSize or axisFontSize) * scale,
         "axes.labelsize": axisFontSize * scale,
         "xtick.labelsize": axisFontSize * scale / 1.4,
         "ytick.labelsize": axisFontSize * scale / 1.4,
@@ -801,22 +799,25 @@ def plotBasisTestConfusionMatrix(topObject, figX=12, figY=12, axisFontSize=30, x
 
 
 # Volcano plot of most significant genes to scTOP predictions for a cell type
-def plotPredictivity(topObject, testLabel, basisLabel, basis=None, includeCriteria=None, showHigh=10, labelOnly=True, figX=8, figY=8, title="", outFile=None):
+def plotPredictivity(topObject, testLabel, basisLabel, basis=None, showHigh=10, labelOnly=True, getDiffs=False, figX=8, figY=8, title="", outFile=None):
 
     # Get predictivity and associated genes
     predictivity = topObject.predictivity if basis is None else topObject.getBasisPredictivity(basis=basis) 
     genes = predictivity.loc[basisLabel]
 
     # Plot expression of cell type of interest
-    genesWithZeroes = topObject.processed.loc[:, topObject.annotations == testLabel].reindex(genes.index, fill_value=0) # Fill missing genes
-    averageExpressions = genesWithZeroes.loc[genes.index].T.mean()
+    genesWithZeroes = topObject.processed.loc[:, topObject.annotations == testLabel].reindex(genes.index, fill_value=0).loc[genes.index].T.mean(axis=0)
+    averageExpressions = genesWithZeroes - topObject.processed.loc[:, topObject.annotations != testLabel].reindex(genes.index, fill_value=0).loc[genes.index].T.mean(axis=0) if getDiffs else genesWithZeroes
+
+    # averageExpressions = genesWithZeroes.loc[genes.index].T.mean()
     fig, ax = plt.subplots(1, 1, figsize=(figX, figY))
     ax.scatter(averageExpressions, genes, color='gray', alpha=0.6, label='All Genes', s=3)
 
     # Sort genes to get the top values and plot contributions
     if type(showHigh) is int and showHigh > 0: 
-        scoreContributions = topObject.scoreContributions if not labelOnly and basis is None else topObject.getScoreContributions(basis=basis, includeCriteria=topObject.annotations == testLabel)
-        highContributions = scoreContributions[basisLabel].mean(axis=1).sort_values(ascending=False).head(showHigh).index
+        scoreContributions = topObject.scoreContributions if not labelOnly and basis is None else topObject.getScoreContributions(basis=basis, includeCriteria=topObject.annotations == testLabel, getDiffs=getDiffs)
+        highContributions = scoreContributions[basisLabel] if getDiffs else scoreContributions[basisLabel].mean(axis=1)
+        highContributions = highContributions.sort_values(ascending=False).head(showHigh).index
         xHigh = averageExpressions[highContributions]
         yHigh = genes.get(highContributions).values
         ax.scatter(xHigh, yHigh, color='blue', label='Top ' + str(showHigh) + ' Genes', s=3)
@@ -843,7 +844,7 @@ def plotPredictivity(topObject, testLabel, basisLabel, basis=None, includeCriter
         )
     
     # Set labels and title
-    ax.set_xlabel('Gene Expression', fontsize=20)
+    ax.set_xlabel('Differential Expression' if getDiffs else 'Gene Expression', fontsize=20)
     ax.set_ylabel(f'Predictivity {basisLabel}', fontsize=20)
     ax.set_title(title, fontsize=18)
     ax.legend(fontsize=14)
@@ -854,18 +855,21 @@ def plotPredictivity(topObject, testLabel, basisLabel, basis=None, includeCriter
 
 
 # Plot expression of a given gene for each cell type in dataset
-def geneViolinPlot(topObject, gene, outFile=None, figX=10, figY=4, axisFontSize=12, title=""):
+def geneViolinPlot(topObject, gene, outFile=None, includeCriteria=None, xRotation=90, figX=10, figY=4, axisFontSize=12, title=""):
     data = {}
     labels = topObject.sortedCellTypes
     df = topObject.processed if topObject.processed is not None else topObject.df
     for celltype in labels:
-        data[celltype] = df.loc[gene, topObject.annotations == celltype]
+        criteria = topObject.annotations == celltype
+        criteria = criteria if includeCriteria is None else np.logical_and(criteria, includeCriteria) 
+        data[celltype] = df.loc[gene, criteria]
     
     fig, ax = plt.subplots(1, 1, figsize=(figX, figY))
     plt.rcParams.update({
         "font.size": axisFontSize,
     })
     violinResults = sns.violinplot(pd.DataFrame(data), inner="quartile")
+    plt.xticks(fontsize=axisFontSize // 1.2, rotation=xRotation)
     if title == "":
         title = topObject.identifier + " " + gene + " Normalized Expression"
     plt.title(title)
@@ -874,6 +878,67 @@ def geneViolinPlot(topObject, gene, outFile=None, figX=10, figY=4, axisFontSize=
     plt.show()
 
 
+# Get separate projections, annotations, etc. for purpose of overlaying different conditions
+def geneDotPlot(topObjects, includeCriteriaList, genePanel=None, labelAngle=0, annObject=None, log=False, dendrogram=False, renormalized=False, onlyExpressed=False, vmax=None, title="Reported markers selected from prior literature", axisFontSize=24, titleFontSize=18, outFile=None):
+
+    if annObject is None:
+        # For each dataset
+        processedList, annotationsList = ([], [])
+        genes = [gene for label in genePanel for gene in genePanel[label]]
+
+        for i, includeCriteria in enumerate(includeCriteriaList):
+            topObject = topObjects[i]
+            print(topObject.identifier)
+            processed, annotations = topObject.filter(df=topObject.process() if topObject.processed is None else topObject.processed, condition=includeCriteria)
+            if renormalized == "Individual" or renormalized == "Both":
+                minProcessed, maxProcessed = (processed.min(axis=0), processed.max(axis=0))
+                processed = (processed - minProcessed) / (maxProcessed - minProcessed)
+                # processed = pd.DataFrame(zscore(processed, axis=None), index=processed.index
+            annotationsList += [topObject.identifier + " " + annotation for annotation in annotations]
+            processedList.append(processed.loc[processed.index.isin(genes)].T)
+
+        print("Merging TopObjects...")
+        mergedProcessed = pd.concat(processedList, join="outer", axis=0)#.fillna(0)
+        mergedProcessed = mergedProcessed.apply(lambda x: x.fillna(x.min()), axis=1)
+        mergedAnnotations = pd.DataFrame({"celltype": annotationsList}, index=mergedProcessed.index)
+        mergedObject = ad.AnnData(X=mergedProcessed.loc[mergedAnnotations.index], obs=mergedAnnotations)
+        if renormalized == "Together" or renormalized == "Both":
+            sc.pp.scale(mergedObject, max_value=10)
+
+    else:
+        mergedObject = annObject
+
+    # Make the dot plot
+    annotationOrder = sorted(list(set(mergedObject.obs["celltype"])), key=lambda x: x.split(sep=" ", maxsplit=1)[1] + x.split(sep=" ", maxsplit=1)[0]) # Reliant on no spaces in identifier
+    setPlotParameters(axisFontSize=axisFontSize, titleFontSize=titleFontSize)
+    dp = sc.pl.dotplot(mergedObject, genePanel, "celltype", categories_order=annotationOrder, log=log, dendrogram=dendrogram, mean_only_expressed=onlyExpressed, var_group_rotation=labelAngle, 
+                       cmap="Reds", vmax=vmax, title=title, size_title='Fraction of cells\nin cluster (%)', colorbar_title='Expression normalized\nwithin & between samples', return_fig=True, show=False)
+
+    # Add dashed lines separating gene groups and cell states
+    dp.make_figure()
+    axs = dp.get_axes()
+    ax = axs["mainplot_ax"]
+    for start, end in dp.var_group_positions[:-1]:
+        ax.axvline(end + 1, color="gray", linestyle=(0, (4, 6)), linewidth=0.8)
+    cellStateIndices = [i for i, label in enumerate(annotationOrder) if i > 0 and label.split(sep=" ", maxsplit=1)[1] != annotationOrder[i - 1].split(sep=" ", maxsplit=1)[1]]
+    for i in cellStateIndices:
+      ax.axhline(i, color="gray", linestyle=(0, (4, 6)), linewidth=0.8)
+
+    for name in ("color_legend_ax", "size_legend_ax"):
+        axLegend = axs[name]
+        pos = axLegend.get_position()
+        axLegend.set_position([pos.x0 + 0.015, pos.y0, pos.width, pos.height])
+    # plt.xticks(rotation=45)
+    ax.tick_params(axis="x", rotation=45)
+    plt.setp(ax.get_xticklabels(), ha='right', rotation_mode='anchor')
+
+    if outFile is not None:
+        # dp.savefig(outFile, dpi=300)
+        plt.savefig(outFile, bbox_inches='tight', dpi=300)
+    else:
+        plt.show()
+    return mergedObject
+
 # Plot expression of a given gene for each cell type in dataset
 def projectionViolinPlot(topObject, projectionName, target, labels=None, outFile=None, figY=2, title="", source="seaborn", axisFontSize=6, includeCriteria=None, DPI=100):
     data = {}
@@ -881,11 +946,9 @@ def projectionViolinPlot(topObject, projectionName, target, labels=None, outFile
     labels = sorted(list(set(annotations))) if labels is None else labels
     for celltype in labels:
         data[celltype] = projections.loc[target, annotations == celltype]
-    
+    setPlotParameters(axisFontSize=axisFontSize)
     fig, ax = plt.subplots(1, 1, figsize=(len(labels), figY))
-    plt.rcParams.update({
-        "font.size": axisFontSize,
-    })
+
     violinResults = sns.violinplot(pd.DataFrame(data), inner="quartile", palette=setPalette(labels, source=source))
     if title == "":
         title = topObject.identifier + " " + target + " Projection Scores"
@@ -1029,4 +1092,42 @@ def directedVariationHeatmap(topObject, recalculate=False, outFile=None, axisFon
         plt.savefig(outFile)
     plt.show()
 
+
+# Plot heatmap of variation in each cluster of annotation in direction of each other
+def intermediatesHeatmap(diffs, topObject=None, recalculate=False, outFile=None, axisFontSize=24, square=False, cbar=True, title="Intermediates Heatmap"):
+    labels = diffs.index
+    # basis = topObject.setBasis() if topObject.basis is None else topObject.basis
+    # stateCount = len(basis.columns)
     
+    # if hasattr(topObject, "variationFrame") and not recalculate:
+    #     variationFrame = topObject.variationFrame
+    #     labels = variationFrame.index
+    # else:
+    #     labels = sorted(basis.columns)
+    #     processed = topObject.process() if topObject.processed is None else topObject.processed
+    #     annotations = topObject.annotations
+    #     variationMap = {state1: {state1: 1.0} for state1 in basis.columns}
+    
+    #     for i in range(stateCount - 1):
+    #         state1 = labels[i]
+    #         for j in range(i + 1, stateCount):
+    #             state2 = labels[j]
+    #             diff = pd.DataFrame({"Diff": basis[state1] - basis[state2]})
+    #             proj1 = top.score(diff, processed.loc[:, annotations == state1])
+    #             proj2 = top.score(diff, processed.loc[:, annotations == state2])
+    #             variationMap[state1][state2] = proj1.var(axis=1).iloc[0] / proj2.var(axis=1).iloc[0]
+    #             variationMap[state2][state1] = 1 / variationMap[state1][state2]
+    #     topObject.variationFrame = variationFrame = pd.DataFrame.from_dict(variationMap, orient="index").loc[labels, labels]
+
+    # Plot the result
+    plt.subplots(1, 1, figsize=(16, 16)) #figsize=(1.5 * stateCount + 2, 1.5 * stateCount + 2))
+    sns.heatmap(diffs, annot=diffs, fmt='.2g', cmap='mako', cbar=cbar, square=square, cbar_kws={"shrink": 0.6} if square else None, xticklabels=labels, yticklabels=labels, annot_kws={"size": axisFontSize // 1.1})
+    plt.xticks(fontsize=axisFontSize // 1.2, rotation=90)
+    plt.yticks(fontsize=axisFontSize // 1.2, rotation=0)
+    # plt.xlabel('Variation Direction', fontsize=axisFontSize)
+    # plt.ylabel('Source Cell State', fontsize=axisFontSize)
+    plt.title(title, fontsize=axisFontSize)
+    plt.tight_layout()
+    if outFile is not None:
+        plt.savefig(outFile)
+    plt.show()
