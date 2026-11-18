@@ -561,12 +561,12 @@ def plotMultipleGenes(topObject, projectionName, celltype1, celltype2, geneList,
         
     # Filter data
     annotations = topObject.annotations if includeCriteria is None else topObject.annotations[includeCriteria]
-    projections = topObject.projections[projectionName] if includeCriteria is None else topObject.projections[projectionName].loc[:, includeCriteria]
+    projection = topObject.projections[projectionName] if includeCriteria is None else topObject.projections[projectionName].loc[:, includeCriteria]
     geneExpressions = topObject.processed if includeCriteria is None else topObject.processed.loc[:, includeCriteria]
 
     # Undersample cell types based on a count maximum
     if maxLabelCount is not None:
-        projections, annotations = TopObject.downsample(annotations, maxLabelCount, df=projections, seed=seed, keepFull=keepFull)
+        projection, annotations = TopObject.downsample(annotations, maxLabelCount, df=projection, seed=seed, keepFull=keepFull)
         geneExpressions = geneExpressions[annotations.index]
     
     # Ensure genes are in dataset
@@ -600,7 +600,7 @@ def plotMultipleGenes(topObject, projectionName, celltype1, celltype2, geneList,
         # Create the 2D plot
         _ = plotTwo(topObject, projectionName, celltype1, celltype2,
                 gene=gene, ax=axs[i], show=False, xBounds=xBounds, yBounds=yBounds, boundaryMaxDistance=boundaryMaxDistance, labels=labels, markers=labelMarkerMap, axisRenames=axisRenames,
-                annotations=annotations, projections=projections, geneExpressions=geneExpressions, randomOrder=randomOrder, singleColorbar=False, plotMultiple=True,
+                annotations=annotations, projection=projection, geneExpressions=geneExpressions, randomOrder=randomOrder, singleColorbar=False, plotMultiple=True,
                 plotParameters=plotParameters, legendMarkerScale=legendMarkerScale, markerSize=markerSize, axisFontSize=axisFontSize, legendFontSize=legendFontSize)
     # Place legend where space available
     if geneCount < availableSpots:
