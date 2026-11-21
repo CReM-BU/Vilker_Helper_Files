@@ -229,7 +229,7 @@ def setPalette(labels, source="seaborn"):
         colors = ["#F8766D", "#B79F00", "#00BA38", "#00BFC4", "#619CFF", "#F564E3", "#00C08B", "#00B0F6", "#9590FF", "#E76BF3", "#FF62BC", "#FF6A98"]
     elif source == "matplotlib":
         colors = sns.color_palette("tab10")
-    elif source == "lauren":
+    elif source == "Lauren":
         colors = ["#6E8B3D", "#EEAD0E", "#CD3333", "#008B8B", "#009ACD", "#9966CC"]
     elif source == "PRC2":
         colors = ["#1f77b4", "#ff800f", "#279257", "#da3d3e", "#b696d2", "#964B00"]
@@ -253,7 +253,6 @@ def setPalette(labels, source="seaborn"):
 # Helper function to set correspondonce between labels and markers
 def setMarkers(labels):
     markers = {}
-    # markerList = list(Line2D.markers.keys())
     markerList = ["o", "^", "s", "d", "p", "*", "X", "<", ">", "v", "H", "h", "D", ".", ",", "1", "2", "3", "4"]
     for i in range(len(labels)):
         markers[labels[i]] = markerList[i]
@@ -345,6 +344,7 @@ def plotTwo(topObject, projectionName, celltype1, celltype2,
     labels = sorted(annotations.unique()) if labels is None else labels
     palette = setPalette(labels, source=source) if palette is None and gene is None and alternateColumn is None else palette
     markers = setMarkers(labels) if markers is None else markers
+    alpha = 0.5 if supervisedContour or unsupervisedContour else alpha
     legendFontSize = legendFontSize or axisFontSize * 4/3
     if show:
         title = title if title is not None else topObject.identifier + " Projected Onto " + projectionName + " Reference" if overlayCount == 0 else ""
@@ -802,47 +802,54 @@ def plotBasisTestConfusionMatrix(topObject, figX=12, figY=12, axisFontSize=30, x
 def plotPredictivity(topObject, testLabel, basisLabel, basis=None, showHigh=10, labelOnly=True, getDiffs=False, figX=8, figY=8, title="", outFile=None):
 
     # Get predictivity and associated genes
-    predictivity = topObject.predictivity if basis is None else topObject.getBasisPredictivity(basis=basis) 
-    genes = predictivity.loc[basisLabel]
+    # predictivity = topObject.predictivity if basis is None else topObject.getBasisPredictivity(basis=basis) 
+    # geneExpressions = topObject.processed.loc[:, topObject.annotations == testLabel]
+    # commonGenes = np.intersect1d(geneExpressions.index, predictivityMatrix.columns)
+    # predictivity, geneExpressions = (predictivity[commonGenes], geneExpressions.loc[commonGenes])
+    # genes = predictivity.loc[basisLabel]
 
     # Plot expression of cell type of interest
-    genesWithZeroes = topObject.processed.loc[:, topObject.annotations == testLabel].reindex(genes.index, fill_value=0).loc[genes.index].T.mean(axis=0)
-    averageExpressions = genesWithZeroes - topObject.processed.loc[:, topObject.annotations != testLabel].reindex(genes.index, fill_value=0).loc[genes.index].T.mean(axis=0) if getDiffs else genesWithZeroes
+    # genesWithZeroes = topObject.processed.loc[:, topObject.annotations == testLabel].reindex(genes.index, fill_value=0).loc[genes.index].T.mean(axis=0)
+    # averageExpressions = genesWithZeroes - topObject.processed.loc[:, topObject.annotations != testLabel].reindex(genes.index, fill_value=0).loc[genes.index].T.mean(axis=0) if getDiffs else genesWithZeroes
 
     # averageExpressions = genesWithZeroes.loc[genes.index].T.mean()
     fig, ax = plt.subplots(1, 1, figsize=(figX, figY))
-    ax.scatter(averageExpressions, genes, color='gray', alpha=0.6, label='All Genes', s=3)
+    # ax.scatter(averageExpressions, genes, color='gray', alpha=0.6, label='All Genes', s=3)
 
     # Sort genes to get the top values and plot contributions
-    if type(showHigh) is int and showHigh > 0: 
-        scoreContributions = topObject.scoreContributions if not labelOnly and basis is None else topObject.getScoreContributions(basis=basis, includeCriteria=topObject.annotations == testLabel, getDiffs=getDiffs)
-        highContributions = scoreContributions[basisLabel] if getDiffs else scoreContributions[basisLabel].mean(axis=1)
-        highContributions = highContributions.sort_values(ascending=False).head(showHigh).index
-        xHigh = averageExpressions[highContributions]
-        yHigh = genes.get(highContributions).values
-        ax.scatter(xHigh, yHigh, color='blue', label='Top ' + str(showHigh) + ' Genes', s=3)
+    scoreContributions, testScores, predictivity = topObject.getScoreContributions(basis=basis, includeCriteria=topObject.annotations == testLabel, getDiffs=getDiffs, returnAll=True, basisLabel=basisLabel)
+    # return testScores, predictivity
+    # predictivity = predictivity[testScores.index]
+    ax.scatter(testScores, predictivity, color='gray', alpha=0.6, label='All Genes', s=3)
 
-        # Annotate top genes
-        texts = []
-        for gene, (x, y) in zip(highContributions, zip(xHigh, yHigh)):
-            texts.append(ax.text(x, y, gene, fontsize=12))
-        
-        adjust_text(
-            texts,
-            ax=ax,
-            expand_points=(1.2, 1.5),
-            expand_text=(1.3, 1.6),
-            only_move={'points': '', 'text': 'xy'},
-            force_points=0.5,
-            force_text=1.2,
-            # force_pull=2.5,
-            pull_threshold=50,
-            max_move=200,
-            iter_lim=2000,
-            prevent_crossings=True,
-            arrowprops=dict(arrowstyle="-", color="gray", lw=0.5, shrinkA=10)
-        )
-    
+    highContributions = scoreContributions[basisLabel] if getDiffs else scoreContributions[basisLabel].mean(axis=1)
+    highContributions = highContributions.sort_values(ascending=False).head(showHigh).index
+    xHigh = testScores[highContributions]
+    # yHigh = predictivity.get(highContributions).values
+    yHigh = predictivity.loc[basisLabel, highContributions]
+    # return xHigh, yHigh
+    ax.scatter(xHigh, yHigh, color='blue', label='Top ' + str(showHigh) + ' Genes', s=3)
+
+    # Annotate top genes
+    texts = []
+    for gene, (x, y) in zip(highContributions, zip(xHigh, yHigh)):
+        texts.append(ax.text(x, y, gene, fontsize=12))
+    adjust_text(
+        texts,
+        ax=ax,
+        expand_points=(1.2, 1.5),
+        expand_text=(1.3, 1.6),
+        only_move={'points': '', 'text': 'xy'},
+        force_points=0.5,
+        force_text=1.2,
+        # force_pull=2.5,
+        pull_threshold=50,
+        max_move=200,
+        iter_lim=2000,
+        prevent_crossings=True,
+        arrowprops=dict(arrowstyle="-", color="gray", lw=0.5, shrinkA=10)
+    )
+
     # Set labels and title
     ax.set_xlabel('Differential Expression' if getDiffs else 'Gene Expression', fontsize=20)
     ax.set_ylabel(f'Predictivity {basisLabel}', fontsize=20)

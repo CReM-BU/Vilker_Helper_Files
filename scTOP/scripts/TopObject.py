@@ -450,27 +450,76 @@ class TopObject:
         return predictivity
 
     # Create score contribution matrix displaying product of predictivity and normalized expression
-    def getScoreContributions(self, basis=None, includeCriteria=None, getDiffs=False):
+    def getScoreContributions(self, basis=None, includeCriteria=None, getDiffs=False, resetBasis=False, returnAll=False, basisLabel=None):
 
         # Get label expressions
         scoreContributions = {}
         predictivityMatrix = self.predictivity if basis is None else self.getBasisPredictivity(basis=basis)
+        predictivityMatrix = pd.DataFrame(predictivityMatrix.loc[basisLabel], columns=[basisLabel]).T if basisLabel else predictivityMatrix
         geneExpressions = self.processed if includeCriteria is None else self.processed.loc[:, includeCriteria]
+        commonGenes = np.intersect1d(geneExpressions.index, predictivityMatrix.columns)
+        predictivityMatrix, geneExpressions = (predictivityMatrix[commonGenes], geneExpressions.loc[commonGenes])
+        
         if getDiffs:
-            differentials = geneExpressions.mean(axis=1) - self.processed.loc[:, ~includeCriteria].mean(axis=1)
-        term1 = differentials if getDiffs else geneExpressions
+            basisSelf = self.setBasis(includeCriteria=~includeCriteria) if self.basis is None or resetBasis else self.basis
+            # differentials = geneExpressions.mean(axis=1) - self.processed.loc[:, ~includeCriteria].mean(axis=1)
+            meansSelf = geneExpressions.mean(axis=1)
+            # differentials = meansSelf - self.processed.loc[:, ~includeCriteria].mean(axis=1)
+            differentials = []
+            labelQuartiles = {}
+            for label in basisSelf.columns:
+                labelProcessed = self.processed.loc[:, self.annotations == label]
+                labelQuartiles[label] = {gene: np.quantile(labelProcessed.loc[gene], (0.25, 0.5, 0.75)) for gene in commonGenes}
+                
+            for gene in meansSelf.index:
+                geneDiff = 0
+                currentMean = meansSelf.loc[gene]
+                quartile1, quartile2, quartile3 = np.quantile(geneExpressions.loc[gene], (0.25, 0.5, 0.75))
+                # quartile1, quartile3 = np.quantile(geneExpressions.loc[gene], (0.25, 0.75))
+                for label in basisSelf.columns:
+                    currentDiff = currentMean - basisSelf.loc[gene, label]
+                    if abs(currentDiff) < 0.0001:
+                        continue
+                    greater = currentDiff > 0
+                    # otherQuartile1, otherQuartile2, otherQuartile3 = np.quantile(self.processed.loc[gene, self.annotations == label], (0.25, 0.5, 0.75))
+                    # otherQuartile = np.quantile(self.processed.loc[gene, self.annotations == label], 0.75 if greater else 0.25)
+                    # otherQuartile = labelQuartiles[label][gene][1 if greater else 0]
+                    # geneDiff += currentDiff
+                    # geneDiff += currentDiff * abs(currentDiff)
+                    # geneDiff += currentDiff * 3 if abs(currentDiff / currentMean) > 1 else currentDiff
+                    # geneDiff += currentDiff / abs(meansSelf.loc[gene])
+                    otherQuartiles = labelQuartiles[label][gene]
+                    if not greater:
+                        otherQuartiles = [-1 * quartile for quartile in labelQuartiles[label][gene]]
+                        otherQuartiles .reverse()
+                        q1, q2, q3 = (-1 * quartile3, -1 * quartile2, -1 * quartile1)
+                    else:
+                        q1, q2, q3 = (quartile1, quartile2, quartile3)
+
+                    geneDiff += sum([(4 * (q1 - otherQuartiles[2]) if q1 > otherQuartiles[2] else 0),
+                                (2 * (q1 - otherQuartiles[1]) if q1 > otherQuartiles[1] else 0),
+                                (2 * (q2 - otherQuartiles[2]) if q2 > otherQuartiles[2] else 0),
+                                (1 * (q3 - otherQuartiles[2]) if q3 > otherQuartiles[2] else 0),
+                                (1 * (q2 - otherQuartiles[1]) if q2 > otherQuartiles[1] else 0),
+                                (1 * (q1 - otherQuartiles[0]) if q1 > otherQuartiles[0] else 0),
+                                (0.5 * (q3 - otherQuartiles[1]) if q3 > otherQuartiles[1] else 0),
+                                (0.5 * (q2 - otherQuartiles[0]) if q2 > otherQuartiles[0] else 0),
+                                (0.25 * (q3 - otherQuartiles[0]) if q3 > otherQuartiles[0] else 0)]) * (-1 if not greater else 1)
+                    # geneDiff += currentDiff * 2 if (greater and quartile1 > otherQuartile) or (not greater and quartile3 < otherQuartile) else currentDiff
+                    # hardDiff = (quartile1 if greater else quartile3) - otherQuartile
+                    # geneDiff += hardDiff if (greater and hardDiff > 0) else hardDiff if (not greater and hardDiff < 0) else 0
+                differentials.append(geneDiff)
+        testScores = pd.Series(differentials, index=meansSelf.index) if getDiffs else geneExpressions
         
         # Multiply predictivity by expression for each basis label
         for label in predictivityMatrix.index:
             scoreContributions[label] = {}
-            commonGenes = np.intersect1d(term1.index, predictivityMatrix.columns)
             # differentials = geneExpressions.loc[commonGenes].mean(axis=1) - externalGeneExpressions.mean(axis=1)
             # topObject.processed.loc[:, topObject.annotations != testLabel].reindex(genes.index, fill_value=0).loc[genes.index].T.mean(axis=0)
-            scoreContributions[label] = term1.loc[commonGenes].multiply(predictivityMatrix.loc[label, commonGenes], axis=0)
-            # scoreContributions[label] = geneExpressions.loc[commonGenes].multiply(predictivityMatrix.loc[label, commonGenes], axis=0)
+            scoreContributions[label] = testScores.multiply(predictivityMatrix.loc[label], axis=0)
 
         self.scoreContributions = scoreContributions
-        return scoreContributions
+        return scoreContributions if not returnAll else (scoreContributions, testScores, predictivityMatrix)
 
     # Given a projection and a cell type in the basis, change annotation in source to reflect top labels of that cell type
     def newCellTypeCatFromProjection(self, projectionName, target, newCategoryName, newLabelName=None, specificationValue=0.1, target2=None):
@@ -977,7 +1026,7 @@ def loadBasis(file=None, basisCollection=None, basisName=None, geneIndex="gene",
 
     if basisKeep is not None:
         basis = basis[[colName for colName in basis.columns if colName in basisKeep]]
-    print("Loaded " + basisName + " basis!")
+    print("Loaded " + (basisName + " " if basisName else "") + "basis!")
     return basis
 
 
